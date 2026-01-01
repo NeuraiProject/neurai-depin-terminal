@@ -1,0 +1,10 @@
+{
+  "rpc_url": "https://rpc-depin.neurai.org",
+  "rpc_username": "",
+  "rpc_password": "",
+  "token": "MYTOKEN",
+  "privateKey": "encrypted_private_key_will_be_stored_here",
+  "network": "xna",
+  "pollInterval": 10000,
+  "timezone": "UTC"
+}
