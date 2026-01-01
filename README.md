@@ -22,6 +22,18 @@ Terminal client for Neurai DePIN messaging with full-screen interface.
 
 ## Installation
 
+### Install from npm
+
+```bash
+npm install -g @neuraiproject/neurai-depin-terminal
+```
+
+Then run:
+
+```bash
+neurai-depin-terminal
+```
+
 ```bash
 cd docs/neurai-depin-client
 npm install

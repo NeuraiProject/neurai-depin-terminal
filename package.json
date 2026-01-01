@@ -1,5 +1,5 @@
 {
-  "name": "neurai-depin-terminal",
+  "name": "@neuraiproject/neurai-depin-terminal",
   "version": "1.0.0",
   "description": "Neurai DePIN terminal messaging client",
   "type": "module",
