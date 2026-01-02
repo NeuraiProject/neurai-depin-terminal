@@ -5,7 +5,6 @@
  */
 
 import NeuraiKey from '@neuraiproject/neurai-key';
-import secp256k1 from 'secp256k1';
 import {
   ADDRESS,
   ERROR_MESSAGES
@@ -32,7 +31,7 @@ export class WalletManager {
 
   /**
    * Derive address and public key from WIF private key
-   * Uses NeuraiKey to get address and secp256k1 to derive compressed public key
+   * Uses NeuraiKey to get address and derive compressed public key
    * @returns {Promise<void>}
    * @throws {WalletError} If key derivation fails
    */
@@ -46,10 +45,10 @@ export class WalletManager {
       this.address = keyInfo.address;
       this.privateKeyHex = keyInfo.privateKey;
 
-      // Derive compressed public key from private key
-      const privateKeyBuffer = Buffer.from(keyInfo.privateKey, 'hex');
-      const publicKeyBuffer = secp256k1.publicKeyCreate(privateKeyBuffer, true);
-      this.publicKey = Buffer.from(publicKeyBuffer).toString('hex');
+      // Derive compressed public key from WIF
+      this.publicKey = await withSuppressedConsole(() => {
+        return NeuraiKey.getPubkeyByWIF(this.config.network, this.config.privateKey);
+      });
     } catch (error) {
       throw new WalletError(`${ERROR_MESSAGES.INVALID_WIF}: ${error.message}`);
     }
