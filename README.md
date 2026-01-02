@@ -2,6 +2,8 @@
 
 Terminal client for Neurai DePIN messaging with full-screen interface.
 
+<div align="center"><img src="img/terminal-chat.png" alt="Terminal Chat"></div>
+
 ## Features
 
 - ✅ Full-screen terminal interface with blessed
@@ -46,6 +48,8 @@ When you run the application for the first time, an interactive wizard will star
 ```bash
 npm start
 ```
+
+<div align="center"><img src="img/start-terminal.png" alt="Terminal Chat"></div>
 
 The wizard will ask you for:
 
@@ -118,6 +122,12 @@ The application will display a full-screen interface with:
 │ > Type message... (Enter: Send | Ctrl+C: Quit)             │
 └────────────────────────────────────────────────────────────┘
 ```
+
+<div align="center"><img src="img/terminal-chat.png" alt="Terminal Chat"></div>
+
+
+<div align="center"><img src="img/web-wallet.png" alt="Terminal Chat"></div>
+
 
 **Components:**
 
