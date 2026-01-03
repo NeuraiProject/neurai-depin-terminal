@@ -26,6 +26,7 @@ export const renderHeaderLines = ({
   config,
   myAddress,
   totalMessages,
+  messageExpiryHours,
   encryptionType,
   lastConnectionStatus,
   lastPollTime
@@ -45,7 +46,7 @@ export const renderHeaderLines = ({
   }
 
   const line1 = `Neurai DePIN | ${connectedIndicator} RPC: ${rpcUrl} | Token: ${config.token} | Time: ${timezoneDisplay}`;
-  const line2 = `Address: ${myAddress} | Total: ${totalMessages} | Encryption: ${encryptionType} | Last poll: ${lastPollStr}`;
+  const line2 = `Address: ${myAddress} | Total: ${totalMessages} | Expiry: ${messageExpiryHours}h | Encryption: ${encryptionType} | Last check: ${lastPollStr}`;
 
   return [line1, line2];
 };

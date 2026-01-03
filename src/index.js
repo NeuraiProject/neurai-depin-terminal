@@ -27,7 +27,7 @@ import {
 } from './constants.js';
 import { extractErrorMessage, isKnownError, isDebugMode } from './errors.js';
 import { MESSAGE_TYPES } from './domain/messageTypes.js';
-import { emergencyTerminalCleanup } from './utils.js';
+import { emergencyTerminalCleanup, drainInput } from './utils.js';
 
 /**
  * Global UI instance for cleanup on exit
@@ -242,7 +242,10 @@ async function performInitialConnectionCheck(rpcService, ui) {
         connected: true,
         lastPoll: null
       });
-      ui.showSuccess(SUCCESS_MESSAGES.CONNECTED);
+      const connectedMsgHash = ui.showSuccess(SUCCESS_MESSAGES.CONNECTED);
+      setTimeout(() => {
+        ui.removeMessage(connectedMsgHash);
+      }, 10000);
     } catch (error) {
       // Pool info check failed, continue without it
       ui.updateTopBar({
@@ -390,12 +393,9 @@ async function main() {
       process.stdin.removeAllListeners('data');
       process.stdin.removeAllListeners('keypress');
       process.stdin.setRawMode(false);
-      process.stdin.pause();
 
-      // Flush any pending data in buffer
-      if (process.stdin.readableLength > 0) {
-        process.stdin.read();
-      }
+      // Use shared robust flushing logic
+      await drainInput(process.stdin);
 
       // Wait one tick for everything to stabilize
       await new Promise(resolve => setImmediate(resolve));
@@ -439,7 +439,7 @@ async function main() {
     // 6. Initialize UI
     console.log(INFO_MESSAGES.STARTING_UI);
     console.log('');
-  const ui = await CharsmUI.create(config, walletManager, rpcService);
+    const ui = await CharsmUI.create(config, walletManager, rpcService);
     uiInstance = ui;
     ui.setRecipientProvider(
       () => messaging.messageSender.getPrivateRecipientAddresses(),
@@ -536,7 +536,10 @@ async function main() {
     }
 
     // 13. Show instructions
-    ui.showInfo(INFO_MESSAGES.PRESS_CTRL_C);
+    const exitMsgHash = ui.showInfo(INFO_MESSAGES.PRESS_CTRL_C);
+    setTimeout(() => {
+      ui.removeMessage(exitMsgHash);
+    }, 10000);
 
   } catch (error) {
     if (uiInstance) {

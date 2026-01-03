@@ -75,10 +75,10 @@ export function truncate(str, length, suffix = '...') {
  */
 export function formatTimestamp(timestamp, timezone = 'UTC') {
   const date = timestamp instanceof Date ? timestamp : new Date(timestamp * 1000);
-  
+
   // Handle UTC explicitly
   if (timezone === 'UTC') {
-    return date.toLocaleTimeString('en-US', { 
+    return date.toLocaleTimeString('en-US', {
       timeZone: 'UTC',
       hour12: false,
       hour: '2-digit',
@@ -93,7 +93,7 @@ export function formatTimestamp(timestamp, timezone = 'UTC') {
     // Create a new date shifted by the offset hours
     // We use UTC for display to avoid local system timezone interference
     const shiftedDate = new Date(date.getTime() + (offset * 60 * 60 * 1000));
-    return shiftedDate.toLocaleTimeString('en-US', { 
+    return shiftedDate.toLocaleTimeString('en-US', {
       timeZone: 'UTC',
       hour12: false,
       hour: '2-digit',
@@ -103,7 +103,7 @@ export function formatTimestamp(timestamp, timezone = 'UTC') {
   }
 
   // Fallback to UTC
-  return date.toLocaleTimeString('en-US', { 
+  return date.toLocaleTimeString('en-US', {
     timeZone: 'UTC',
     hour12: false,
     hour: '2-digit',
@@ -123,14 +123,84 @@ export function createMessageKey(hash, signature) {
 }
 
 /**
+ * Drain stdin until silence is detected
+ * @param {Object} stdin - Stdin stream
+ * @param {number} silenceMs - Milliseconds of silence to wait for (default: 300)
+ * @param {number} maxWaitMs - Maximum time to wait in total (default: 2000)
+ * @returns {Promise<void>}
+ */
+export async function drainInput(stdin, silenceMs = 300, maxWaitMs = 2000) {
+  // If not TTY, we can't really drain in the same way, but we can try small read
+  if (!stdin.isTTY) {
+    if (stdin.readableLength > 0) stdin.read();
+    return;
+  }
+
+  // Enable raw mode to catch all chars
+  try {
+    stdin.setRawMode(true);
+  } catch (e) {
+    // Ignore
+  }
+
+  await new Promise(resolve => {
+    stdin.resume();
+
+    let silenceTimer;
+    let maxTimer;
+
+    const cleanup = () => {
+      if (silenceTimer) clearTimeout(silenceTimer);
+      if (maxTimer) clearTimeout(maxTimer);
+      stdin.removeAllListeners('data');
+
+      // Pause so we don't eat future input intended for others
+      stdin.pause();
+
+      try {
+        stdin.setRawMode(false);
+      } catch (e) {
+        // Ignore
+      }
+      resolve();
+    };
+
+    const resetSilenceTimer = () => {
+      if (silenceTimer) clearTimeout(silenceTimer);
+      silenceTimer = setTimeout(cleanup, silenceMs);
+    };
+
+    // If we hit the max wait time, just force proceed
+    maxTimer = setTimeout(cleanup, maxWaitMs);
+
+    // Listen for ANY data and drain it
+    stdin.on('data', () => {
+      resetSilenceTimer();
+    });
+
+    // Start the initial timer
+    resetSilenceTimer();
+  });
+
+  // Final sanity check drain
+  if (stdin.readableLength > 0) {
+    stdin.read();
+  }
+}
+
+/**
  * Read password from stdin with character masking (pure implementation without readline)
  * @param {string} prompt - Prompt to display
  * @param {string} [maskChar='*'] - Character to display for each typed character
  * @returns {Promise<string>} The entered password
  */
-export function readPassword(prompt, maskChar = '*') {
+export async function readPassword(prompt, maskChar = '*') {
+  const stdin = process.stdin;
+
+  // Use robust drain before starting
+  await drainInput(stdin, 200, 1000);
+
   return new Promise((resolve, reject) => {
-    const stdin = process.stdin;
     let onDataHandler = null;
 
     // Comprehensive cleanup function to ensure stdin is in pristine state
@@ -155,18 +225,6 @@ export function readPassword(prompt, maskChar = '*') {
       // CharsmUI will manage its own resume/pause
     };
 
-    // Flush stdin buffer completely - may need multiple reads
-    const flushBuffer = () => {
-      if (!stdin.isTTY) return;
-
-      // Read all available data until buffer is empty
-      let flushed = 0;
-      while (stdin.readableLength > 0 && flushed < 10) {
-        stdin.read();
-        flushed++;
-      }
-    };
-
     // Ensure stdin is in correct initial state
     if (!stdin.isTTY) {
       reject(new Error('stdin is not a TTY'));
@@ -178,9 +236,6 @@ export function readPassword(prompt, maskChar = '*') {
     stdin.removeAllListeners('keypress');
     stdin.resume();
 
-    // Flush buffer aggressively
-    flushBuffer();
-
     // Set raw mode for character-by-character input
     try {
       stdin.setRawMode(true);
@@ -190,9 +245,6 @@ export function readPassword(prompt, maskChar = '*') {
     }
 
     stdin.setEncoding('utf8');
-
-    // Flush again after setting raw mode and encoding
-    flushBuffer();
 
     // Always mask password (show asterisks)
     const shouldMask = true;
@@ -321,18 +373,10 @@ export function readPassword(prompt, maskChar = '*') {
     // Attach listener FIRST so it can filter any incoming ANSI sequences
     stdin.on('data', onDataHandler);
 
-    // Flush one more time before showing prompt
-    flushBuffer();
-
-    // Small delay to let terminal stabilize and send any pending responses
-    // The listener is already attached so it will filter them
+    // Show prompt after a tiny delay
     setTimeout(() => {
-      // Final flush after delay
-      flushBuffer();
-
-      // Now show prompt
       process.stdout.write(prompt);
-    }, 50);
+    }, 10);
   });
 }
 
@@ -349,12 +393,12 @@ export async function withSuppressedConsole(fn) {
   const originalStdoutWrite = process.stdout.write;
   const originalStderrWrite = process.stderr.write;
 
-  console.log = () => {};
-  console.warn = () => {};
-  console.error = () => {};
-  console.info = () => {};
-  process.stdout.write = () => {};
-  process.stderr.write = () => {};
+  console.log = () => { };
+  console.warn = () => { };
+  console.error = () => { };
+  console.info = () => { };
+  process.stdout.write = () => { };
+  process.stderr.write = () => { };
 
   try {
     return await fn();
@@ -376,6 +420,12 @@ export function resetTerminal() {
   if (process.stdout.isTTY) {
     try {
       process.stdout.write(TERMINAL.EXIT_ALT_SCREEN);
+      // Disable mouse reporting (1000, 1002, 1003, 1006, 1015)
+      process.stdout.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1015l');
+      // Disable bracketed paste (2004)
+      process.stdout.write('\x1b[?2004l');
+      // Disable focus tracking (1004)
+      process.stdout.write('\x1b[?1004l');
       process.stdout.write(TERMINAL.SHOW_CURSOR);
       process.stdout.write(TERMINAL.RESET_ATTRIBUTES);
       process.stdout.write(TERMINAL.NEW_LINE);
@@ -429,6 +479,12 @@ export function emergencyTerminalCleanup() {
     try {
       // Reset terminal attributes
       process.stdout.write(TERMINAL.RESET_ATTRIBUTES);
+      // Disable mouse reporting (1000, 1002, 1003, 1006, 1015)
+      process.stdout.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1015l');
+      // Disable bracketed paste (2004)
+      process.stdout.write('\x1b[?2004l');
+      // Disable focus tracking (1004)
+      process.stdout.write('\x1b[?1004l');
       process.stdout.write(TERMINAL.SHOW_CURSOR);
     } catch (err) {
       // Ignore errors
@@ -482,8 +538,8 @@ export function validatePassword(password, minLength, maxLength) {
  */
 export function isPubkeyRevealed(pubkeyResponse) {
   return pubkeyResponse?.pubkey &&
-         pubkeyResponse?.revealed === 1 &&
-         pubkeyResponse.pubkey.trim().length > 0;
+    pubkeyResponse?.revealed === 1 &&
+    pubkeyResponse.pubkey.trim().length > 0;
 }
 
 /**

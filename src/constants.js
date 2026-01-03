@@ -172,7 +172,7 @@ export const INFO_MESSAGES = {
   LOADING_LIBRARY: 'Loading DePIN library...',
   INITIALIZING_WALLET: 'Initializing wallet...',
   STARTING_UI: 'Starting terminal interface...',
-  PRESS_CTRL_C: 'Press Ctrl+C to exit.',
+  PRESS_CTRL_C: 'Press ESC or CTRL+C to exit.',
   CONNECTING: 'Attempting to connect to DePIN server...',
   RECONNECTING: 'Reconnecting, check server configuration',
   SENDING: 'Sending message...',

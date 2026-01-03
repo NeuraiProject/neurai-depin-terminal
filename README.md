@@ -110,7 +110,7 @@ The application will display a full-screen interface with:
 ```
 ┌────────────────────────────────────────────────────────────┐
 │ Neurai DePIN | RPC: localhost:19001 | ● Connected          │
-│ Token: MYTOKEN | NXXXabc...xyz | Last poll: 10:23:45       │
+│ Token: MYTOKEN | NXXXabc...xyz | Last check: 10:23:45       │
 ├────────────────────────────────────────────────────────────┤
 │                                                            │
 │ [10:20:15] NXXXdef...123: Hello world                      │
@@ -119,7 +119,7 @@ The application will display a full-screen interface with:
 │                                                            │
 │                                                            │
 ├────────────────────────────────────────────────────────────┤
-│ > Type message... (Enter: Send | Ctrl+C: Quit)             │
+│ > Type message... (Enter: Send | Esc: Quit)                │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -131,14 +131,14 @@ The application will display a full-screen interface with:
 
 **Components:**
 
-- **Top bar**: Shows RPC connection status, configured token, address and last poll time
+- **Top bar**: Shows RPC connection status, configured token, address and last check time
 - **Message area**: Shows received and sent messages (scrollable with arrow keys)
 - **Input area**: Type your message here
 
 ### Keyboard Shortcuts
 
 - **Enter** or **Ctrl+S**: Send message
-- **Ctrl+C** or **Escape**: Exit application
+- **Escape** or **Ctrl+C**: Exit application
 - **Up/Down arrows**: Scroll in message area
 - **Ctrl+Left / Ctrl+Right**: Switch tabs
 - **Ctrl+W**: Close active private tab

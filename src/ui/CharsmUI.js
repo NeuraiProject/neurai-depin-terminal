@@ -17,6 +17,7 @@ import {
   renderStatusLine,
   renderTabLines
 } from './render.js';
+import { resetTerminal } from '../utils.js';
 import { MESSAGE_TYPES, normalizeMessageType } from '../domain/messageTypes.js';
 
 const ANSI = {
@@ -69,6 +70,7 @@ export class CharsmUI {
     this.inputDisabled = false;
 
     this.totalMessages = 0;
+    this.messageExpiryHours = 0;
     this.encryptionType = PRIVACY.DEFAULT_ENCRYPTION;
     this.lastConnectionStatus = false;
     this.lastPollTime = null;
@@ -189,26 +191,14 @@ export class CharsmUI {
       process.stdin.off('keypress', this.keypressHandler);
       this.keypressHandler = null;
     }
+    process.stdin.removeAllListeners('keypress'); // Remove keypress specifically
     if (this.resizeHandler) {
       process.stdout.off('resize', this.resizeHandler);
       this.resizeHandler = null;
     }
-    if (process.stdin.isTTY) {
-      try {
-        process.stdin.setRawMode(false);
-      } catch (err) {
-        // Ignore
-      }
-      try {
-        process.stdin.pause();
-      } catch (err) {
-        // Ignore
-      }
-    }
-    if (process.stdout.isTTY) {
-      process.stdout.write(TERMINAL.EXIT_ALT_SCREEN);
-    }
-    process.stdout.write(ANSI.SHOW_CURSOR + ANSI.RESET);
+
+    // Use the comprehensive reset function from utils
+    resetTerminal();
   }
 
   setRecipientProvider(provider, cacheProvider = null) {
@@ -309,11 +299,8 @@ export class CharsmUI {
   }
 
   handleKeypress(str, key) {
-    if (key && key.ctrl && key.name === 'c') {
-      this.cleanup();
-      process.exit(0);
-    }
-    if (key && key.name === 'escape' && !this.recipientSelector.isOpen()) {
+    // Check for Ctrl+C or ESC
+    if ((key && key.ctrl && key.name === 'c') || (key && key.name === 'escape' && !this.recipientSelector.isOpen())) {
       this.cleanup();
       process.exit(0);
     }
@@ -428,6 +415,7 @@ export class CharsmUI {
       config: this.config,
       myAddress: this.myAddress,
       totalMessages: this.totalMessages,
+      messageExpiryHours: this.messageExpiryHours,
       encryptionType: this.encryptionType,
       lastConnectionStatus: this.lastConnectionStatus,
       lastPollTime: this.lastPollTime
@@ -604,6 +592,7 @@ export class CharsmUI {
   updatePoolInfo(poolInfo) {
     if (poolInfo) {
       this.totalMessages = poolInfo.messages || 0;
+      this.messageExpiryHours = poolInfo.messageexpiryhours || 0;
       this.encryptionType = poolInfo.cipher || PRIVACY.DEFAULT_ENCRYPTION;
       this.scheduleRender();
     }
@@ -641,28 +630,35 @@ export class CharsmUI {
   }
 
   addSystemMessage(type, message) {
+    const hash = `sys-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     this.addMessage({
       sender: 'SYSTEM',
       message: `[${type.toUpperCase()}] ${message}`,
       timestamp: Math.floor(Date.now() / 1000),
-      hash: `sys-${Date.now()}`,
+      hash: hash,
       signature: '',
       messageType: MESSAGE_TYPES.GROUP,
       isSystem: true,
       systemType: type
     });
+    return hash;
+  }
+
+  removeMessage(hash) {
+    this.displayedMessages = this.displayedMessages.filter(m => m.hash !== hash);
+    this.scheduleRender();
   }
 
   showError(errorMsg) {
-    this.addSystemMessage('error', errorMsg);
+    return this.addSystemMessage('error', errorMsg);
   }
 
   showInfo(infoMsg) {
-    this.addSystemMessage('info', infoMsg);
+    return this.addSystemMessage('info', infoMsg);
   }
 
   showSuccess(successMsg) {
-    this.addSystemMessage('success', successMsg);
+    return this.addSystemMessage('success', successMsg);
   }
 
   updateSendStatus(message, type = 'info') {
