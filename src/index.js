@@ -20,6 +20,7 @@ import {
   ERROR_MESSAGES,
   WARNING_MESSAGES,
   MESSAGE,
+  RECIPIENT_CACHE,
   HASH,
   ICONS
 } from './constants.js';
@@ -378,7 +379,16 @@ async function main() {
       messageStore,
       messagePoller,
       messageSender,
-      detachPollerUi: null
+      detachPollerUi: null,
+      recipientRefreshInterval: null
+    };
+
+    const refreshRecipientCache = async (force = false) => {
+      try {
+        await messaging.messageSender.refreshRecipientCache(force);
+      } catch (error) {
+        // Non-fatal: keep existing cache if any
+      }
     };
 
     // 6. Initialize UI
@@ -386,10 +396,18 @@ async function main() {
     console.log('');
     const ui = new TerminalUI(config, walletManager, rpcService);
     uiInstance = ui;
-    ui.setRecipientProvider(() => messaging.messageSender.getPrivateRecipientAddresses());
+    ui.setRecipientProvider(
+      () => messaging.messageSender.getPrivateRecipientAddresses(),
+      () => messaging.messageSender.getCachedPrivateRecipientAddresses()
+    );
 
     // 7. Get initial pool info and check connection
     await performInitialConnectionCheck(rpcService, ui);
+    refreshRecipientCache(true);
+    messaging.recipientRefreshInterval = setInterval(
+      () => refreshRecipientCache(true),
+      RECIPIENT_CACHE.REFRESH_MS
+    );
 
     let onRpcDownHandler = null;
 
@@ -429,6 +447,7 @@ async function main() {
         neuraiDepinMsg,
         walletManager
       );
+      messaging.messageSender = new MessageSender(config, walletManager, rpcService, neuraiDepinMsg);
 
       // Mark as disconnected so the first poll is a full sync
       messaging.messagePoller.wasDisconnected = true;
@@ -438,6 +457,7 @@ async function main() {
       // Refresh pool info like at startup
       await performInitialConnectionCheck(rpcService, ui);
 
+      await refreshRecipientCache(true);
       messaging.messagePoller.start();
       await messaging.messagePoller.poll();
     };

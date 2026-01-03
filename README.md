@@ -151,14 +151,16 @@ Send a private message by starting the line with `@` and the destination address
 
 Messages without the `@address` prefix are sent as group/broadcast messages.
 Typing `@` at the start opens a recipient list you can navigate with arrow keys and select with Enter (Esc to close).
+The recipient list is cached and refreshed every 60 seconds to keep selection fast.
 
 ## How It Works
 
 1. **Startup**: Application loads configuration and connects to RPC server
 2. **Polling**: Every 10 seconds (configurable) checks for new messages in the DePIN pool
 3. **Reception**: Messages are automatically decrypted and displayed on screen
-4. **Sending**: Messages without a prefix are sent to **all token holders** (broadcast). To send a private message, use `@address message`.
-5. **Privacy**: If the server has a privacy layer configured (`depinpoolpkey`), messages are additionally encrypted
+4. **Sending**: Messages without a prefix are sent to **all token holders with a revealed pubkey** (broadcast). To send a private message, use `@address message`.
+5. **Recipients**: Eligible recipients are fetched via `listdepinaddresses` and cached locally (refreshed every 60 seconds)
+6. **Privacy**: If the server has a privacy layer configured (`depinpoolpkey`), messages are additionally encrypted
 
 ## Architecture
 
@@ -198,6 +200,7 @@ Verify that:
 - Your address owns the configured DePIN token
 - Other token holders exist with revealed public keys
 - The RPC server supports DePIN methods (`depinreceivemsg`, `depinsubmitmsg`)
+- The RPC server supports `listdepinaddresses` for recipient discovery
 
 ### Error: "No recipients found with revealed public key"
 

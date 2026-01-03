@@ -46,7 +46,7 @@ export class TerminalUI {
     this.lastConnectionStatus = false;
     this.lastPollTime = null;
     this.recipientProvider = null;
-    this.recipientCache = null;
+    this.recipientCacheProvider = null;
     this.recipientLoadPromise = null;
 
     this.initializeScreen();
@@ -132,8 +132,9 @@ export class TerminalUI {
    * Set provider for private recipient list
    * @param {Function} provider - Async function returning array of addresses
    */
-  setRecipientProvider(provider) {
+  setRecipientProvider(provider, cacheProvider = null) {
     this.recipientProvider = provider;
+    this.recipientCacheProvider = cacheProvider;
   }
 
   async loadRecipientList() {
@@ -141,19 +142,11 @@ export class TerminalUI {
       return [];
     }
 
-    if (this.recipientCache) {
-      return this.recipientCache;
-    }
-
     if (this.recipientLoadPromise) {
       return this.recipientLoadPromise;
     }
 
-    this.recipientLoadPromise = (async () => {
-      const recipients = await this.recipientProvider();
-      this.recipientCache = recipients;
-      return recipients;
-    })();
+    this.recipientLoadPromise = Promise.resolve(this.recipientProvider());
 
     try {
       return await this.recipientLoadPromise;
@@ -182,8 +175,14 @@ export class TerminalUI {
 
     this.inputBox.pauseInput();
 
-    this.recipientSelector.setLoading();
-    this.recipientSelector.show();
+    const cached = this.recipientCacheProvider ? this.recipientCacheProvider() : [];
+    if (cached && cached.length > 0) {
+      this.recipientSelector.setItems(cached);
+      this.recipientSelector.show();
+    } else {
+      this.recipientSelector.setLoading();
+      this.recipientSelector.show();
+    }
 
     try {
       const recipients = await this.loadRecipientList();

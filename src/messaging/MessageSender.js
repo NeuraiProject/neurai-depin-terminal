@@ -6,10 +6,11 @@
 
 import {
   RPC_METHODS,
-  ERROR_MESSAGES
+  ERROR_MESSAGES,
+  RECIPIENT_CACHE
 } from '../constants.js';
 import { MessageError, DepinError } from '../errors.js';
-import { isPubkeyRevealed, normalizePubkey, hasPrivacyLayer } from '../utils.js';
+import { normalizePubkey, hasPrivacyLayer } from '../utils.js';
 
 /**
  * Sends DePIN messages to token holders or a specific recipient
@@ -28,6 +29,11 @@ export class MessageSender {
     this.walletManager = walletManager;
     this.rpcService = rpcService;
     this.neuraiDepinMsg = neuraiDepinMsg;
+    this.recipientCache = {
+      entries: [],
+      updatedAt: 0,
+      pending: null
+    };
   }
 
   /**
@@ -43,57 +49,96 @@ export class MessageSender {
    * @returns {Promise<Array<string>>} Array of addresses
    * @throws {MessageError} If no token holders found
    */
-  async getTokenHolders() {
+  async fetchDepinRecipients() {
     const rpc = this.getRpc();
-    const addressesData = await rpc(RPC_METHODS.LIST_ADDRESSES_BY_ASSET, [this.config.token]);
-    const addresses = Object.keys(addressesData);
 
-    if (addresses.length === 0) {
-      throw new MessageError(ERROR_MESSAGES.NO_TOKEN_HOLDERS);
+    try {
+      const result = await rpc(RPC_METHODS.LIST_DEPIN_ADDRESSES, [this.config.token]);
+
+      if (!Array.isArray(result)) {
+        throw new MessageError('Invalid response from listdepinaddresses');
+      }
+
+      const recipients = result
+        .filter((entry) => entry && entry.address && entry.pubkey)
+        .map((entry) => ({
+          address: entry.address,
+          pubkey: normalizePubkey(entry.pubkey)
+        }));
+
+      if (recipients.length === 0) {
+        throw new MessageError(ERROR_MESSAGES.NO_RECIPIENTS);
+      }
+
+      return recipients;
+    } catch (error) {
+      if (error instanceof MessageError) {
+        throw error;
+      }
+      throw new MessageError(`Failed to fetch recipient list: ${error.message}`);
+    }
+  }
+
+  async refreshRecipientCache(force = false) {
+    const now = Date.now();
+    const hasCache = this.recipientCache.entries.length > 0;
+    const isFresh = now - this.recipientCache.updatedAt < RECIPIENT_CACHE.REFRESH_MS;
+
+    if (!force && hasCache && isFresh) {
+      return this.recipientCache.entries;
     }
 
-    return addresses;
+    if (this.recipientCache.pending) {
+      return this.recipientCache.pending;
+    }
+
+    this.recipientCache.pending = (async () => {
+      const entries = await this.fetchDepinRecipients();
+      this.recipientCache.entries = entries;
+      this.recipientCache.updatedAt = Date.now();
+      return entries;
+    })();
+
+    try {
+      return await this.recipientCache.pending;
+    } catch (error) {
+      if (hasCache) {
+        return this.recipientCache.entries;
+      }
+      throw error;
+    } finally {
+      this.recipientCache.pending = null;
+    }
+  }
+
+  getCachedRecipientEntries() {
+    return this.recipientCache.entries;
+  }
+
+  getCachedPrivateRecipientAddresses() {
+    if (!this.recipientCache.entries.length) {
+      return [];
+    }
+    return this.recipientCache.entries.map((entry) => entry.address).sort();
   }
 
   /**
-   * Get revealed public keys from addresses
-   * @param {Array<string>} addresses - Array of addresses
+   * Get revealed public keys
    * @returns {Promise<Array<string>>} Array of revealed public keys (normalized)
    * @throws {MessageError} If no recipients with revealed public keys
    */
-  async getRecipientPubkeys(addresses) {
-    const recipients = await this.getRecipientEntries(addresses);
+  async getRecipientPubkeys() {
+    const recipients = await this.refreshRecipientCache();
     return recipients.map((entry) => entry.pubkey);
   }
 
   /**
    * Get revealed public keys with addresses
-   * @param {Array<string>} addresses - Array of addresses
    * @returns {Promise<Array<{address: string, pubkey: string}>>} Recipient entries
    * @throws {MessageError} If no recipients with revealed public keys
    */
-  async getRecipientEntries(addresses) {
-    const recipients = [];
-    const rpc = this.getRpc();
-
-    for (const addr of addresses) {
-      try {
-        const res = await rpc(RPC_METHODS.GET_PUBKEY, [addr]);
-
-        if (isPubkeyRevealed(res)) {
-          recipients.push({ address: addr, pubkey: normalizePubkey(res.pubkey) });
-        }
-      } catch (error) {
-        // Skip addresses without revealed pubkey
-        continue;
-      }
-    }
-
-    if (recipients.length === 0) {
-      throw new MessageError(ERROR_MESSAGES.NO_RECIPIENTS);
-    }
-
-    return recipients;
+  async getRecipientEntries() {
+    return this.refreshRecipientCache();
   }
 
   /**
@@ -102,8 +147,7 @@ export class MessageSender {
    * @throws {MessageError} If no recipients with revealed public keys
    */
   async getPrivateRecipientAddresses() {
-    const addresses = await this.getTokenHolders();
-    const recipients = await this.getRecipientEntries(addresses);
+    const recipients = await this.refreshRecipientCache();
     return recipients.map((entry) => entry.address).sort();
   }
 
@@ -114,22 +158,19 @@ export class MessageSender {
    * @throws {MessageError} If pubkey is not revealed or RPC fails
    */
   async getRecipientPubkeyForAddress(address) {
-    const rpc = this.getRpc();
+    let recipients = await this.refreshRecipientCache();
+    let match = recipients.find((entry) => entry.address === address);
 
-    try {
-      const res = await rpc(RPC_METHODS.GET_PUBKEY, [address]);
-
-      if (!isPubkeyRevealed(res)) {
-        throw new MessageError(`${ERROR_MESSAGES.RECIPIENT_PUBKEY_NOT_REVEALED}: ${address}`);
-      }
-
-      return normalizePubkey(res.pubkey);
-    } catch (error) {
-      if (error instanceof MessageError) {
-        throw error;
-      }
-      throw new MessageError(`Failed to fetch recipient pubkey: ${error.message}`);
+    if (!match) {
+      recipients = await this.refreshRecipientCache(true);
+      match = recipients.find((entry) => entry.address === address);
     }
+
+    if (!match) {
+      throw new MessageError(`${ERROR_MESSAGES.RECIPIENT_PUBKEY_NOT_REVEALED}: ${address}`);
+    }
+
+    return match.pubkey;
   }
 
   /**
@@ -241,11 +282,8 @@ export class MessageSender {
         const recipientPubkey = await this.getRecipientPubkeyForAddress(parsed.recipientAddress);
         recipientPubKeys = [recipientPubkey];
       } else {
-        // 1. Get all token holders (broadcast)
-        const addresses = await this.getTokenHolders();
-
-        // 2. Get pubkeys from all recipients
-        recipientPubKeys = await this.getRecipientPubkeys(addresses);
+        // 1. Get pubkeys from all recipients (broadcast)
+        recipientPubKeys = await this.getRecipientPubkeys();
       }
 
       // 3. Build encrypted message

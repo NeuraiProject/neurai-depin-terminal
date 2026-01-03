@@ -48,6 +48,11 @@ export const MESSAGE = {
   FORCE_POLL_DELAY: 2000
 };
 
+// Recipient cache
+export const RECIPIENT_CACHE = {
+  REFRESH_MS: 60000
+};
+
 // Token Validation
 export const TOKEN = {
   PREFIX: '&',
@@ -94,7 +99,8 @@ export const RPC_METHODS = {
   DEPIN_SUBMIT_MSG: 'depinsubmitmsg',
   DEPIN_GET_MSG_INFO: 'depingetmsginfo',
   LIST_ADDRESSES_BY_ASSET: 'listaddressesbyasset',
-  GET_PUBKEY: 'getpubkey'
+  GET_PUBKEY: 'getpubkey',
+  LIST_DEPIN_ADDRESSES: 'listdepinaddresses'
 };
 
 // Terminal Control Sequences
