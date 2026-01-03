@@ -1,6 +1,6 @@
 /**
  * Message sender for Neurai DePIN Terminal
- * Handles sending broadcast messages to all token holders
+ * Handles sending broadcast and private messages
  * @module MessageSender
  */
 
@@ -12,7 +12,7 @@ import { MessageError, DepinError } from '../errors.js';
 import { isPubkeyRevealed, normalizePubkey, hasPrivacyLayer } from '../utils.js';
 
 /**
- * Sends DePIN messages to all token holders
+ * Sends DePIN messages to token holders or a specific recipient
  */
 export class MessageSender {
   /**
@@ -86,12 +86,63 @@ export class MessageSender {
   }
 
   /**
+   * Get revealed public key for a single address
+   * @param {string} address - Recipient address
+   * @returns {Promise<string>} Normalized recipient public key
+   * @throws {MessageError} If pubkey is not revealed or RPC fails
+   */
+  async getRecipientPubkeyForAddress(address) {
+    const rpc = this.getRpc();
+
+    try {
+      const res = await rpc(RPC_METHODS.GET_PUBKEY, [address]);
+
+      if (!isPubkeyRevealed(res)) {
+        throw new MessageError(`${ERROR_MESSAGES.RECIPIENT_PUBKEY_NOT_REVEALED}: ${address}`);
+      }
+
+      return normalizePubkey(res.pubkey);
+    } catch (error) {
+      if (error instanceof MessageError) {
+        throw error;
+      }
+      throw new MessageError(`Failed to fetch recipient pubkey: ${error.message}`);
+    }
+  }
+
+  /**
+   * Parse message input to detect private messages
+   * @param {string} message - Raw message input
+   * @returns {{messageType: string, message: string, recipientAddress: (string|null)}}
+   * @throws {MessageError} If private format is invalid
+   */
+  parseMessageInput(message) {
+    const trimmed = message.trim();
+
+    if (!trimmed.startsWith('@')) {
+      return { messageType: 'group', message: trimmed, recipientAddress: null };
+    }
+
+    const match = trimmed.match(/^@(\S+)\s+(.+)$/);
+
+    if (!match) {
+      throw new MessageError(ERROR_MESSAGES.INVALID_PRIVATE_MESSAGE_FORMAT);
+    }
+
+    const recipientAddress = match[1];
+    const privateMessage = match[2].trim();
+
+    return { messageType: 'private', message: privateMessage, recipientAddress };
+  }
+
+  /**
    * Build encrypted DePIN message
    * @param {string} message - Plaintext message
    * @param {Array<string>} recipientPubKeys - Array of recipient public keys
+   * @param {"private"|"group"} messageType - Message type
    * @returns {Promise<Object>} Build result with hex payload
    */
-  async buildEncryptedMessage(message, recipientPubKeys) {
+  async buildEncryptedMessage(message, recipientPubKeys, messageType) {
     return await this.neuraiDepinMsg.buildDepinMessage({
       token: this.config.token,
       senderAddress: this.walletManager.getAddress(),
@@ -99,7 +150,8 @@ export class MessageSender {
       privateKey: this.walletManager.getPrivateKeyHex(),
       timestamp: Math.floor(Date.now() / 1000),
       message: message,
-      recipientPubKeys: recipientPubKeys
+      recipientPubKeys: recipientPubKeys,
+      messageType: messageType
     });
   }
 
@@ -138,13 +190,15 @@ export class MessageSender {
   }
 
   /**
-   * Send a broadcast message to all token holders
+   * Send a group or private message
    * @param {string} message - Plaintext message to send
    * @returns {Promise<Object>} Result object with hash and recipient count
    * @returns {Promise<Object>} result
    * @returns {string} result.hash - Transaction hash
    * @returns {number} result.recipients - Number of recipients
    * @returns {number} result.timestamp - Send timestamp
+   * @returns {"private"|"group"} result.messageType - Message type
+   * @returns {string|null} result.recipientAddress - Target address for private messages
    * @throws {MessageError} If sending fails
    */
   async send(message) {
@@ -158,14 +212,26 @@ export class MessageSender {
         }
       }
 
-      // 1. Get all token holders (broadcast)
-      const addresses = await this.getTokenHolders();
+      const parsed = this.parseMessageInput(message);
+      let recipientPubKeys = [];
 
-      // 2. Get pubkeys from all recipients
-      const recipientPubKeys = await this.getRecipientPubkeys(addresses);
+      if (parsed.messageType === 'private') {
+        const recipientPubkey = await this.getRecipientPubkeyForAddress(parsed.recipientAddress);
+        recipientPubKeys = [recipientPubkey];
+      } else {
+        // 1. Get all token holders (broadcast)
+        const addresses = await this.getTokenHolders();
+
+        // 2. Get pubkeys from all recipients
+        recipientPubKeys = await this.getRecipientPubkeys(addresses);
+      }
 
       // 3. Build encrypted message
-      const buildResult = await this.buildEncryptedMessage(message, recipientPubKeys);
+      const buildResult = await this.buildEncryptedMessage(
+        parsed.message,
+        recipientPubKeys,
+        parsed.messageType
+      );
 
       // 4. Wrap with server privacy layer if enabled
       const payload = await this.wrapWithPrivacyLayer(buildResult.hex);
@@ -178,8 +244,10 @@ export class MessageSender {
 
       return {
         hash: result.hash || result.txid,
-        recipients: recipientPubKeys.length,
-        timestamp: Math.floor(Date.now() / 1000)
+        recipients: parsed.messageType === 'private' ? 1 : recipientPubKeys.length,
+        timestamp: Math.floor(Date.now() / 1000),
+        messageType: parsed.messageType,
+        recipientAddress: parsed.recipientAddress
       };
     } catch (error) {
       // Mark as disconnected on error

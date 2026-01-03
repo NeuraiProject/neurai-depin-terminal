@@ -1,6 +1,6 @@
 {
   "name": "@neuraiproject/neurai-depin-terminal",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Neurai DePIN terminal messaging client",
   "type": "module",
   "main": "dist/index.cjs",
@@ -45,9 +45,9 @@
   "author": "Neurai Community",
   "license": "MIT",
   "dependencies": {
-    "@neuraiproject/neurai-depin-msg": "^2.1.1",
-    "@neuraiproject/neurai-jswallet": "0.12.8",
-    "@neuraiproject/neurai-key": "^2.8.6",
+    "@neuraiproject/neurai-depin-msg": "^2.1.3",
+    "@neuraiproject/neurai-jswallet": "0.12.10",
+    "@neuraiproject/neurai-key": "^2.8.7",
     "blessed": "^0.1.81",
     "blessed-contrib": "^4.11.0",
     "chalk": "^5.3.0",

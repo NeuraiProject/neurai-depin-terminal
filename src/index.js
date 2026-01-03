@@ -172,11 +172,21 @@ function connectSenderToUI(ui, messageSender, getMessagePoller) {
 
     try {
       const result = await messageSender.send(message);
+      const hashPreview = result.hash
+        ? `${result.hash.slice(0, HASH.DISPLAY_LENGTH)}...`
+        : 'N/A';
 
-      ui.updateSendStatus(
-        `Message sent to ${result.recipients} recipients. Hash: ${result.hash.slice(0, HASH.DISPLAY_LENGTH)}...`,
-        'success'
-      );
+      if (result.messageType === 'private') {
+        ui.updateSendStatus(
+          `Private message sent to ${result.recipientAddress}. Hash: ${hashPreview}`,
+          'success'
+        );
+      } else {
+        ui.updateSendStatus(
+          `Message sent to ${result.recipients} recipients. Hash: ${hashPreview}`,
+          'success'
+        );
+      }
 
       // Force a poll after sending to see the message
       setTimeout(() => {

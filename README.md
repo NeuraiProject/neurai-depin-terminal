@@ -141,12 +141,22 @@ The application will display a full-screen interface with:
 - **Ctrl+C** or **Escape**: Exit application
 - **Up/Down arrows**: Scroll in message area
 
+### Private Messages
+
+Send a private message by starting the line with `@` and the destination address:
+
+```
+@NxxxRecipientAddress Hello, this is a private message.
+```
+
+Messages without the `@address` prefix are sent as group/broadcast messages.
+
 ## How It Works
 
 1. **Startup**: Application loads configuration and connects to RPC server
 2. **Polling**: Every 10 seconds (configurable) checks for new messages in the DePIN pool
 3. **Reception**: Messages are automatically decrypted and displayed on screen
-4. **Sending**: When pressing Ctrl+S, the message is sent to **all token holders** (broadcast)
+4. **Sending**: Messages without a prefix are sent to **all token holders** (broadcast). To send a private message, use `@address message`.
 5. **Privacy**: If the server has a privacy layer configured (`depinpoolpkey`), messages are additionally encrypted
 
 ## Architecture

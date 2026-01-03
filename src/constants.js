@@ -143,7 +143,9 @@ export const ERROR_MESSAGES = {
   INVALID_RPC_URL: 'Invalid RPC URL',
   CONNECTION_ERROR: 'Connection error',
   TOKEN_NOT_OWNED: 'This address does not own the configured token',
-  PUBKEY_NOT_REVEALED: 'Public key not revealed on blockchain'
+  PUBKEY_NOT_REVEALED: 'Public key not revealed on blockchain',
+  INVALID_PRIVATE_MESSAGE_FORMAT: 'Private message format: @address message',
+  RECIPIENT_PUBKEY_NOT_REVEALED: 'Recipient public key not revealed on blockchain'
 };
 
 // Success Messages
@@ -165,7 +167,7 @@ export const INFO_MESSAGES = {
   PRESS_CTRL_C: 'Press Ctrl+C to exit.',
   CONNECTING: 'Attempting to connect to DePIN server...',
   RECONNECTING: 'Reconnecting, check server configuration',
-  SENDING: 'Sending message to all token holders...',
+  SENDING: 'Sending message...',
   VERIFYING_TOKEN: 'Verifying token ownership...',
   VERIFYING_PUBKEY: 'Verifying public key...'
 };
