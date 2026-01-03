@@ -130,42 +130,69 @@ export function createMessageKey(hash, signature) {
  */
 export function readPassword(prompt, maskChar = '*') {
   return new Promise((resolve) => {
-    process.stdout.write(prompt);
     const stdin = process.stdin;
-    stdin.setRawMode(true);
+    const wasRaw = Boolean(stdin.isTTY && stdin.isRaw);
     stdin.resume();
+    if (stdin.isTTY) {
+      try {
+        stdin.setRawMode(true);
+      } catch (error) {
+        // Ignore raw mode failures and fall back to line mode
+      }
+    }
     stdin.setEncoding('utf8');
+    process.stdout.write(prompt);
     let password = '';
+    let done = false;
+
+    const finish = () => {
+      if (done) {
+        return;
+      }
+      done = true;
+      if (stdin.isTTY) {
+        try {
+          stdin.setRawMode(wasRaw);
+        } catch (error) {
+          // Ignore raw mode reset failures
+        }
+      }
+      stdin.pause();
+      stdin.removeListener('data', onData);
+      process.stdout.write('\n');
+      resolve(password);
+    };
 
     const onData = (char) => {
-      switch (char) {
-        case KEY_CODES.ENTER:
-        case KEY_CODES.CARRIAGE_RETURN:
-        case KEY_CODES.CTRL_D:
-          stdin.setRawMode(false);
-          stdin.pause();
-          stdin.removeListener('data', onData);
-          process.stdout.write('\n');
-          resolve(password);
+      for (const ch of char) {
+        if (done) {
           break;
+        }
+        switch (ch) {
+          case KEY_CODES.ENTER:
+          case KEY_CODES.CARRIAGE_RETURN:
+          case KEY_CODES.CTRL_D:
+            finish();
+            break;
 
-        case KEY_CODES.CTRL_C:
-          process.stdout.write('\n');
-          process.exit(0);
-          break;
+          case KEY_CODES.CTRL_C:
+            process.stdout.write('\n');
+            process.exit(0);
+            break;
 
-        case KEY_CODES.BACKSPACE:
-        case KEY_CODES.BACKSPACE_ALT:
-          if (password.length > 0) {
-            password = password.slice(0, -1);
-            process.stdout.write(TERMINAL.BACKSPACE);
-          }
-          break;
+          case KEY_CODES.BACKSPACE:
+          case KEY_CODES.BACKSPACE_ALT:
+            if (password.length > 0) {
+              password = password.slice(0, -1);
+              process.stdout.write(TERMINAL.BACKSPACE);
+            }
+            break;
 
-        default:
-          password += char;
-          process.stdout.write(maskChar);
-          break;
+          default:
+            password += ch;
+            process.stdout.write(maskChar);
+            break;
+        }
       }
     };
 
