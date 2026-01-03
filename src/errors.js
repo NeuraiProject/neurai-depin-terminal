@@ -147,3 +147,20 @@ export function extractErrorMessage(error, fallback = 'Unknown error') {
 
   return fallback;
 }
+
+/**
+ * Check if an error is a known/expected application error
+ * @param {Error} error - Error object
+ * @returns {boolean} True if error is a known application error
+ */
+export function isKnownError(error) {
+  return error instanceof DepinError;
+}
+
+/**
+ * Check if debug mode is enabled
+ * @returns {boolean} True if debug mode is enabled
+ */
+export function isDebugMode() {
+  return process.env.DEPIN_DEBUG === '1' || process.env.NODE_ENV === 'development';
+}

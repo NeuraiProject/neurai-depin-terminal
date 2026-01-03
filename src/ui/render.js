@@ -28,8 +28,7 @@ export const renderHeaderLines = ({
   totalMessages,
   encryptionType,
   lastConnectionStatus,
-  lastPollTime,
-  applyStyle
+  lastPollTime
 }) => {
   const rpcUrl = parseRpcHost(config.rpc_url);
   const connectedIndicator = lastConnectionStatus ? '●' : '○';
@@ -48,10 +47,7 @@ export const renderHeaderLines = ({
   const line1 = `Neurai DePIN | ${connectedIndicator} RPC: ${rpcUrl} | Token: ${config.token} | Time: ${timezoneDisplay}`;
   const line2 = `Address: ${myAddress} | Total: ${totalMessages} | Encryption: ${encryptionType} | Last poll: ${lastPollStr}`;
 
-  return [
-    applyStyle(line1, 'header'),
-    applyStyle(line2, 'header')
-  ];
+  return [line1, line2];
 };
 
 export const renderTabLines = ({ tabs, activeTabId, applyStyle }) => {
@@ -59,20 +55,34 @@ export const renderTabLines = ({ tabs, activeTabId, applyStyle }) => {
     const label = tab.unread ? `${tab.label}*` : tab.label;
     const content = ` ${label} `;
     const borderChar = tab.id === activeTabId ? '═' : '─';
+    const isActive = tab.id === activeTabId;
     const top = `┌${borderChar.repeat(content.length)}┐`;
     const middle = `│${content}│`;
     return {
       lines: [top, middle],
-      styleId: tab.id === activeTabId ? 'tabActive' : 'tabInactive'
+      styleId: isActive ? 'tabActive' : 'tabInactive',
+      isActive
     };
   });
 
   if (blocks.length === 0) {
-    return [''];
+    return { lines: [''], activeRange: null };
   }
 
   const height = 2;
   const combined = [];
+  let activeRange = null;
+  let cursor = 0;
+  blocks.forEach((block, index) => {
+    const blockWidth = block.lines[0].length;
+    if (block.isActive) {
+      activeRange = { start: cursor, end: cursor + blockWidth - 1 };
+    }
+    cursor += blockWidth;
+    if (index < blocks.length - 1) {
+      cursor += 1;
+    }
+  });
   for (let i = 0; i < height; i += 1) {
     const line = blocks.map((block) => {
       return applyStyle(block.lines[i], block.styleId);
@@ -80,7 +90,7 @@ export const renderTabLines = ({ tabs, activeTabId, applyStyle }) => {
     combined.push(line);
   }
 
-  return combined;
+  return { lines: combined, activeRange };
 };
 
 export const formatMessageLine = (msg, { config, myAddress, applyStyle }) => {

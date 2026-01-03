@@ -25,8 +25,9 @@ import {
   HASH,
   ICONS
 } from './constants.js';
-import { extractErrorMessage } from './errors.js';
+import { extractErrorMessage, isKnownError, isDebugMode } from './errors.js';
 import { MESSAGE_TYPES } from './domain/messageTypes.js';
+import { emergencyTerminalCleanup } from './utils.js';
 
 /**
  * Global UI instance for cleanup on exit
@@ -375,11 +376,30 @@ function startVerificationLoop(rpcService, walletManager, config, ui, getMessage
  */
 async function main() {
   try {
+    // Emergency cleanup to ensure terminal is in a clean state
+    emergencyTerminalCleanup();
+
     console.log('Neurai DePIN Terminal');
     console.log('=====================\n');
 
     // 1. Load configuration
     const config = await initializeConfig();
+
+    // Comprehensive stdin cleanup after password prompt
+    if (process.stdin.isTTY) {
+      process.stdin.removeAllListeners('data');
+      process.stdin.removeAllListeners('keypress');
+      process.stdin.setRawMode(false);
+      process.stdin.pause();
+
+      // Flush any pending data in buffer
+      if (process.stdin.readableLength > 0) {
+        process.stdin.read();
+      }
+
+      // Wait one tick for everything to stabilize
+      await new Promise(resolve => setImmediate(resolve));
+    }
 
     // 2. Load DePIN library
     const neuraiDepinMsg = await initializeLibrary();
@@ -524,10 +544,20 @@ async function main() {
     }
 
     const errorMsg = extractErrorMessage(error, 'Unknown error');
-    console.error('Fatal error:', errorMsg);
 
-    if (error.stack) {
-      console.error(error.stack);
+    // For known errors, show a clean message. For unknown errors or debug mode, show stack trace
+    if (isKnownError(error)) {
+      console.error('\n✗ Error:', errorMsg);
+      if (isDebugMode() && error.stack) {
+        console.error('\nStack trace:');
+        console.error(error.stack);
+      }
+    } else {
+      console.error('\n✗ Fatal error:', errorMsg);
+      if (error.stack) {
+        console.error('\nStack trace:');
+        console.error(error.stack);
+      }
     }
 
     process.exit(1);
@@ -543,10 +573,19 @@ process.on('unhandledRejection', (error) => {
   }
 
   const errorMsg = extractErrorMessage(error, 'Unknown error');
-  console.error('Unhandled error:', errorMsg);
 
-  if (error && error.stack) {
-    console.error(error.stack);
+  if (isKnownError(error)) {
+    console.error('\n✗ Error:', errorMsg);
+    if (isDebugMode() && error && error.stack) {
+      console.error('\nStack trace:');
+      console.error(error.stack);
+    }
+  } else {
+    console.error('\n✗ Unhandled error:', errorMsg);
+    if (error && error.stack) {
+      console.error('\nStack trace:');
+      console.error(error.stack);
+    }
   }
 
   process.exit(1);

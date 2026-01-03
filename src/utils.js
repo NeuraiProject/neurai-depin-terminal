@@ -123,80 +123,216 @@ export function createMessageKey(hash, signature) {
 }
 
 /**
- * Read password from stdin with character masking
+ * Read password from stdin with character masking (pure implementation without readline)
  * @param {string} prompt - Prompt to display
  * @param {string} [maskChar='*'] - Character to display for each typed character
  * @returns {Promise<string>} The entered password
  */
 export function readPassword(prompt, maskChar = '*') {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const stdin = process.stdin;
-    const wasRaw = Boolean(stdin.isTTY && stdin.isRaw);
-    stdin.resume();
-    if (stdin.isTTY) {
-      try {
-        stdin.setRawMode(true);
-      } catch (error) {
-        // Ignore raw mode failures and fall back to line mode
+    let onDataHandler = null;
+
+    // Comprehensive cleanup function to ensure stdin is in pristine state
+    const cleanup = (removeListener = true) => {
+      if (removeListener && onDataHandler) {
+        stdin.removeListener('data', onDataHandler);
+        onDataHandler = null;
       }
+
+      // Remove ALL listeners to avoid any residual state
+      stdin.removeAllListeners('data');
+
+      if (stdin.isTTY) {
+        try {
+          stdin.setRawMode(false);
+        } catch (error) {
+          // Ignore raw mode reset failures
+        }
+      }
+
+      // DON'T pause stdin - leave it ready for next use
+      // CharsmUI will manage its own resume/pause
+    };
+
+    // Flush stdin buffer completely - may need multiple reads
+    const flushBuffer = () => {
+      if (!stdin.isTTY) return;
+
+      // Read all available data until buffer is empty
+      let flushed = 0;
+      while (stdin.readableLength > 0 && flushed < 10) {
+        stdin.read();
+        flushed++;
+      }
+    };
+
+    // Ensure stdin is in correct initial state
+    if (!stdin.isTTY) {
+      reject(new Error('stdin is not a TTY'));
+      return;
     }
+
+    // Start fresh
+    stdin.removeAllListeners('data');
+    stdin.removeAllListeners('keypress');
+    stdin.resume();
+
+    // Flush buffer aggressively
+    flushBuffer();
+
+    // Set raw mode for character-by-character input
+    try {
+      stdin.setRawMode(true);
+    } catch (error) {
+      reject(new Error(`Failed to set raw mode: ${error.message}`));
+      return;
+    }
+
     stdin.setEncoding('utf8');
-    process.stdout.write(prompt);
+
+    // Flush again after setting raw mode and encoding
+    flushBuffer();
+
+    // Always mask password (show asterisks)
+    const shouldMask = true;
     let password = '';
     let done = false;
+    let escapeState = 'normal';
 
     const finish = () => {
       if (done) {
         return;
       }
       done = true;
-      if (stdin.isTTY) {
-        try {
-          stdin.setRawMode(wasRaw);
-        } catch (error) {
-          // Ignore raw mode reset failures
-        }
-      }
-      stdin.pause();
-      stdin.removeListener('data', onData);
+      cleanup(true);
       process.stdout.write('\n');
       resolve(password);
     };
 
-    const onData = (char) => {
-      for (const ch of char) {
+    onDataHandler = (chunk) => {
+      for (const ch of chunk) {
         if (done) {
           break;
         }
+
+        const codePoint = ch.charCodeAt(0);
+
+        // State machine for filtering ANSI escape sequences
+        if (escapeState === 'esc') {
+          if (ch === '[') {
+            escapeState = 'csi';
+          } else if (ch === ']') {
+            escapeState = 'osc';
+          } else {
+            escapeState = 'normal';
+          }
+          continue;
+        }
+
+        if (escapeState === 'csi') {
+          if (ch >= '@' && ch <= '~') {
+            escapeState = 'normal';
+          }
+          continue;
+        }
+
+        if (escapeState === 'osc') {
+          if (ch === '\x07') {
+            escapeState = 'normal';
+          } else if (codePoint === 0x9c) {
+            escapeState = 'normal';
+          } else if (ch === '\x1b') {
+            escapeState = 'osc-esc';
+          }
+          continue;
+        }
+
+        if (escapeState === 'osc-esc') {
+          if (ch === '\\') {
+            escapeState = 'normal';
+          } else if (ch !== '\x1b') {
+            escapeState = 'osc';
+          }
+          continue;
+        }
+
+        // Process actual characters
         switch (ch) {
           case KEY_CODES.ENTER:
           case KEY_CODES.CARRIAGE_RETURN:
           case KEY_CODES.CTRL_D:
             finish();
-            break;
+            return;
 
           case KEY_CODES.CTRL_C:
+            cleanup(true);
             process.stdout.write('\n');
+            resetTerminal();
             process.exit(0);
-            break;
 
           case KEY_CODES.BACKSPACE:
           case KEY_CODES.BACKSPACE_ALT:
             if (password.length > 0) {
               password = password.slice(0, -1);
-              process.stdout.write(TERMINAL.BACKSPACE);
+              if (shouldMask) {
+                process.stdout.write(TERMINAL.BACKSPACE);
+              }
             }
             break;
 
           default:
+            // Start of escape sequence
+            if (ch === '\x1b') {
+              escapeState = 'esc';
+              break;
+            }
+
+            // C1 control characters (ignore)
+            if (codePoint === 0x9b) {
+              escapeState = 'csi';
+              break;
+            }
+            if (codePoint === 0x9d) {
+              escapeState = 'osc';
+              break;
+            }
+            if (codePoint >= 0x80 && codePoint <= 0x9f) {
+              // Ignore C1 control characters
+              break;
+            }
+
+            // C0 control characters (ignore except Enter, Backspace, Ctrl+C handled above)
+            if (codePoint < 0x20) {
+              // Ignore C0 control characters
+              break;
+            }
+
+            // Valid printable character
             password += ch;
-            process.stdout.write(maskChar);
+            if (shouldMask) {
+              process.stdout.write(maskChar);
+            }
             break;
         }
       }
     };
 
-    stdin.on('data', onData);
+    // Attach listener FIRST so it can filter any incoming ANSI sequences
+    stdin.on('data', onDataHandler);
+
+    // Flush one more time before showing prompt
+    flushBuffer();
+
+    // Small delay to let terminal stabilize and send any pending responses
+    // The listener is already attached so it will filter them
+    setTimeout(() => {
+      // Final flush after delay
+      flushBuffer();
+
+      // Now show prompt
+      process.stdout.write(prompt);
+    }, 50);
   });
 }
 
@@ -254,6 +390,48 @@ export function resetTerminal() {
       process.stdin.pause();
     } catch (err) {
       // Ignore errors during stdin reset
+    }
+  }
+}
+
+/**
+ * Emergency terminal cleanup
+ * Called at startup to ensure terminal is in a clean state
+ */
+export function emergencyTerminalCleanup() {
+  if (process.stdin.isTTY) {
+    try {
+      // Remove any stale listeners
+      process.stdin.removeAllListeners('keypress');
+      process.stdin.removeAllListeners('data');
+
+      // Ensure raw mode is off
+      process.stdin.setRawMode(false);
+
+      // Resume stdin to allow reading buffered data
+      process.stdin.resume();
+
+      // Aggressively flush all buffered data (may need multiple reads)
+      let flushed = 0;
+      while (process.stdin.readableLength > 0 && flushed < 10) {
+        process.stdin.read();
+        flushed++;
+      }
+
+      // Now pause for normal operation
+      process.stdin.pause();
+    } catch (err) {
+      // Ignore errors during cleanup
+    }
+  }
+
+  if (process.stdout.isTTY) {
+    try {
+      // Reset terminal attributes
+      process.stdout.write(TERMINAL.RESET_ATTRIBUTES);
+      process.stdout.write(TERMINAL.SHOW_CURSOR);
+    } catch (err) {
+      // Ignore errors
     }
   }
 }

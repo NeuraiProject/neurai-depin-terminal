@@ -36,22 +36,28 @@ export class ConfigManager {
    * Encrypt private key using AES-256-GCM
    * @param {string} privateKey - Plain text private key in WIF format
    * @param {string} password - Password for encryption
-   * @returns {string} Encrypted data in format: salt:iv:authTag:encrypted (hex)
+   * @returns {Promise<string>} Encrypted data in format: salt:iv:authTag:encrypted (hex)
    * @throws {EncryptionError} If encryption fails
    */
-  encryptPrivateKey(privateKey, password) {
+  async encryptPrivateKey(privateKey, password) {
     try {
       const salt = crypto.randomBytes(ENCRYPTION.SALT_LENGTH);
-      const key = crypto.scryptSync(
-        password,
-        salt,
-        ENCRYPTION.KEY_LENGTH,
-        {
-          N: ENCRYPTION.SCRYPT_COST,
-          r: ENCRYPTION.SCRYPT_BLOCK_SIZE,
-          p: ENCRYPTION.SCRYPT_PARALLELIZATION
-        }
-      );
+      const key = await new Promise((resolve, reject) => {
+        crypto.scrypt(
+          password,
+          salt,
+          ENCRYPTION.KEY_LENGTH,
+          {
+            N: ENCRYPTION.SCRYPT_COST,
+            r: ENCRYPTION.SCRYPT_BLOCK_SIZE,
+            p: ENCRYPTION.SCRYPT_PARALLELIZATION
+          },
+          (err, derivedKey) => {
+            if (err) reject(err);
+            else resolve(derivedKey);
+          }
+        );
+      });
       const iv = crypto.randomBytes(ENCRYPTION.IV_LENGTH);
       const cipher = crypto.createCipheriv(ENCRYPTION.ALGORITHM, key, iv);
 
@@ -69,10 +75,10 @@ export class ConfigManager {
    * Decrypt private key using AES-256-GCM
    * @param {string} encryptedData - Encrypted data in format: salt:iv:authTag:encrypted
    * @param {string} password - Password for decryption
-   * @returns {string} Decrypted private key in WIF format
+   * @returns {Promise<string>} Decrypted private key in WIF format
    * @throws {EncryptionError} If decryption fails or password is incorrect
    */
-  decryptPrivateKey(encryptedData, password) {
+  async decryptPrivateKey(encryptedData, password) {
     try {
       const parts = encryptedData.split(':');
       if (parts.length !== 4) {
@@ -84,16 +90,22 @@ export class ConfigManager {
       const authTag = Buffer.from(parts[2], 'hex');
       const encrypted = parts[3];
 
-      const key = crypto.scryptSync(
-        password,
-        salt,
-        ENCRYPTION.KEY_LENGTH,
-        {
-          N: ENCRYPTION.SCRYPT_COST,
-          r: ENCRYPTION.SCRYPT_BLOCK_SIZE,
-          p: ENCRYPTION.SCRYPT_PARALLELIZATION
-        }
-      );
+      const key = await new Promise((resolve, reject) => {
+        crypto.scrypt(
+          password,
+          salt,
+          ENCRYPTION.KEY_LENGTH,
+          {
+            N: ENCRYPTION.SCRYPT_COST,
+            r: ENCRYPTION.SCRYPT_BLOCK_SIZE,
+            p: ENCRYPTION.SCRYPT_PARALLELIZATION
+          },
+          (err, derivedKey) => {
+            if (err) reject(err);
+            else resolve(derivedKey);
+          }
+        );
+      });
       const decipher = crypto.createDecipheriv(ENCRYPTION.ALGORITHM, key, iv);
       decipher.setAuthTag(authTag);
 
@@ -126,10 +138,13 @@ export class ConfigManager {
       const password = await readPassword('Enter password to decrypt private key: ');
 
       try {
-        privateKey = this.decryptPrivateKey(this.config.privateKey, password);
+        process.stdout.write('Verifying password...');
+        privateKey = await this.decryptPrivateKey(this.config.privateKey, password);
+        process.stdout.write('\r\x1b[K'); // Clear the "Verifying..." line
         decrypted = true;
         console.log('✓ Private key decrypted successfully\n');
       } catch (error) {
+        process.stdout.write('\r\x1b[K'); // Clear the "Verifying..." line
         if (attempts < maxAttempts) {
           console.log(`✗ Incorrect password. ${maxAttempts - attempts} attempts remaining.\n`);
         } else {
@@ -258,7 +273,9 @@ export class ConfigManager {
 
     // Get password and encrypt private key
     const password = await this.promptForPasswordCreation();
-    const encryptedPrivateKey = this.encryptPrivateKey(privateKey, password);
+    process.stdout.write('Encrypting private key...');
+    const encryptedPrivateKey = await this.encryptPrivateKey(privateKey, password);
+    process.stdout.write('\r\x1b[K'); // Clear the "Encrypting..." line
     console.log('✓ Private key encrypted successfully\n');
 
     // Create new readline for remaining questions

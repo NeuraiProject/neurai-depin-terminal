@@ -31,9 +31,10 @@ const ANSI = {
 export class CharsmUI {
   static async create(config, walletManager, rpcService) {
     try {
+      // Reduce timeout to 500ms to avoid blocking startup
       await Promise.race([
         initLip(),
-        new Promise((resolve) => setTimeout(resolve, 3000))
+        new Promise((resolve) => setTimeout(resolve, 500))
       ]);
     } catch (error) {
       // If WASM init stalls or fails, proceed with basic rendering (no styles)
@@ -75,6 +76,11 @@ export class CharsmUI {
     this.sendCallback = null;
     this.keypressHandler = null;
     this.resizeHandler = null;
+    this.keypressEventsInitialized = false;
+
+    // Rendering optimization
+    this.renderScheduled = false;
+    this.renderImmediate = false;
   }
 
   initialize() {
@@ -156,7 +162,12 @@ export class CharsmUI {
   }
 
   setupInput() {
-    readline.emitKeypressEvents(process.stdin);
+    // Only call emitKeypressEvents once to prevent duplicate listeners
+    if (!this.keypressEventsInitialized) {
+      readline.emitKeypressEvents(process.stdin);
+      this.keypressEventsInitialized = true;
+    }
+
     if (process.stdin.isTTY) {
       process.stdin.setEncoding('utf8');
       process.stdin.setRawMode(true);
@@ -164,7 +175,7 @@ export class CharsmUI {
 
     this.keypressHandler = (str, key) => this.handleKeypress(str, key);
     process.stdin.on('keypress', this.keypressHandler);
-    this.resizeHandler = () => this.render();
+    this.resizeHandler = () => this.scheduleRender();
     process.stdout.on('resize', this.resizeHandler);
     process.stdin.resume();
     if (process.stdout.isTTY) {
@@ -176,13 +187,20 @@ export class CharsmUI {
   cleanup() {
     if (this.keypressHandler) {
       process.stdin.off('keypress', this.keypressHandler);
+      this.keypressHandler = null;
     }
     if (this.resizeHandler) {
       process.stdout.off('resize', this.resizeHandler);
+      this.resizeHandler = null;
     }
     if (process.stdin.isTTY) {
       try {
         process.stdin.setRawMode(false);
+      } catch (err) {
+        // Ignore
+      }
+      try {
+        process.stdin.pause();
       } catch (err) {
         // Ignore
       }
@@ -206,34 +224,34 @@ export class CharsmUI {
     if (!this.tabManager.setActiveTab(tabId)) {
       return;
     }
-    this.render();
+    this.scheduleRender();
   }
 
   activateNextTab() {
     if (!this.tabManager.activateNextTab()) {
       return;
     }
-    this.render();
+    this.scheduleRender();
   }
 
   activatePrevTab() {
     if (!this.tabManager.activatePrevTab()) {
       return;
     }
-    this.render();
+    this.scheduleRender();
   }
 
   closeActiveTab() {
     if (!this.tabManager.closeActiveTab()) {
       return;
     }
-    this.render();
+    this.scheduleRender();
   }
 
   openPrivateTab(address, activate = false, timestamp = null) {
     const tab = this.tabManager.openPrivateTab(address, activate, timestamp);
     if (tab) {
-      this.render();
+      this.scheduleRender();
     }
     return tab;
   }
@@ -254,7 +272,7 @@ export class CharsmUI {
     await this.recipientSelector.openSelector({
       cachedItems: cached,
       loadItems: () => this.loadRecipientList(),
-      onUpdate: () => this.render(),
+      onUpdate: () => this.scheduleRender(),
       onError: (error) => {
         this.updateSendStatus(`Failed to load recipients: ${error.message}`, 'error');
       }
@@ -266,7 +284,7 @@ export class CharsmUI {
       return;
     }
     this.recipientSelector.close();
-    this.render();
+    this.scheduleRender();
   }
 
   applyRecipientSelection(address) {
@@ -275,7 +293,7 @@ export class CharsmUI {
     }
     this.inputValue = `@${address} `;
     this.closeRecipientSelector();
-    this.render();
+    this.scheduleRender();
   }
 
   ensureInputReady() {
@@ -339,7 +357,7 @@ export class CharsmUI {
     if (key && key.name === 'backspace') {
       if (this.inputValue.length > 0) {
         this.inputValue = this.inputValue.slice(0, -1);
-        this.render();
+        this.scheduleRender();
       }
       return;
     }
@@ -351,7 +369,7 @@ export class CharsmUI {
         this.openRecipientSelector();
         return;
       }
-      this.render();
+      this.scheduleRender();
     }
   }
 
@@ -366,7 +384,7 @@ export class CharsmUI {
       return;
     }
     if (action.action === 'update') {
-      this.render();
+      this.scheduleRender();
     }
   }
 
@@ -386,7 +404,7 @@ export class CharsmUI {
 
     this.inputValue = '';
     this.scrollOffset = 0;
-    this.render();
+    this.scheduleRender();
 
     if (this.sendCallback) {
       this.sendCallback(outgoing);
@@ -395,13 +413,13 @@ export class CharsmUI {
 
   scrollUp() {
     this.scrollOffset += 1;
-    this.render();
+    this.scheduleRender();
   }
 
   scrollDown() {
     if (this.scrollOffset > 0) {
       this.scrollOffset -= 1;
-      this.render();
+      this.scheduleRender();
     }
   }
 
@@ -412,8 +430,7 @@ export class CharsmUI {
       totalMessages: this.totalMessages,
       encryptionType: this.encryptionType,
       lastConnectionStatus: this.lastConnectionStatus,
-      lastPollTime: this.lastPollTime,
-      applyStyle: this.applyStyle.bind(this)
+      lastPollTime: this.lastPollTime
     });
   }
 
@@ -487,17 +504,42 @@ export class CharsmUI {
     return renderStatusLine(this.statusMessage, this.statusType, this.applyStyle.bind(this));
   }
 
+  /**
+   * Schedule a render to happen on the next tick (non-blocking)
+   * Use this for non-critical updates like typing, scrolling
+   */
+  scheduleRender() {
+    if (this.renderScheduled) {
+      return;
+    }
+    this.renderScheduled = true;
+    setImmediate(() => {
+      this.renderScheduled = false;
+      this.renderNow();
+    });
+  }
+
+  /**
+   * Force an immediate render (blocking)
+   * Use this sparingly for critical updates like new messages, errors
+   */
+  renderNow() {
+    this.render();
+  }
+
   render() {
     const rows = process.stdout.rows || 24;
     const cols = process.stdout.columns || 80;
     const innerWidth = Math.max(cols - 2, 10);
     const headerLines = this.renderHeaderLines();
-    const tabLines = this.renderTabLines();
+    const tabRender = this.renderTabLines();
+    const tabLines = tabRender.lines;
     const footerLines = 4; // input top + input + input bottom + status
     const frameLines = 2; // top + bottom border
     const dividerLines = 1;
+    const headerDividerLines = 1;
     const messageHeight = Math.max(
-      rows - frameLines - headerLines.length - tabLines.length - dividerLines - footerLines,
+      rows - frameLines - headerLines.length - headerDividerLines - tabLines.length - dividerLines - footerLines,
       1
     );
 
@@ -509,15 +551,29 @@ export class CharsmUI {
 
     const borderTop = `┌${'─'.repeat(innerWidth)}┐`;
     const borderBottom = `└${'─'.repeat(innerWidth)}┘`;
-    const divider = `├${'─'.repeat(innerWidth)}┤`;
-    const inputTop = divider;
-    const inputBottom = divider;
+    const standardDivider = `├${'─'.repeat(innerWidth)}┤`;
+    const tabDividerInner = Array.from('─'.repeat(innerWidth));
+    if (tabRender.activeRange) {
+      const start = Math.max(0, Math.min(innerWidth - 1, tabRender.activeRange.start));
+      const end = Math.max(0, Math.min(innerWidth - 1, tabRender.activeRange.end));
+      for (let i = start; i <= end; i += 1) {
+        tabDividerInner[i] = ' ';
+      }
+    }
+    const tabDivider = `├${tabDividerInner.join('')}┤`;
+    const headerDivider = `├${'─'.repeat(innerWidth)}┤`;
+    const inputTop = standardDivider;
+    const inputBottom = standardDivider;
 
     const outputLines = [
       borderTop,
-      ...headerLines.map((line) => `│${padLine(line, innerWidth)}│`),
+      ...headerLines.map((line) => {
+        const padded = padLine(line, innerWidth);
+        return `│${this.applyStyle(padded, 'header')}│`;
+      }),
+      headerDivider,
       ...tabLines.map((line) => `│${padLine(line, innerWidth)}│`),
-      divider,
+      tabDivider,
       ...paddedMessages.map((line) => `│${padLine(line, innerWidth)}│`),
       inputTop,
       `│${padLine(this.renderInputLine(), innerWidth)}│`,
@@ -529,7 +585,7 @@ export class CharsmUI {
     const output = outputLines.join('\n');
     process.stdout.write(`${ANSI.CLEAR}${ANSI.HOME}${output}`);
 
-    const inputRow = 1 + headerLines.length + tabLines.length + dividerLines + messageHeight + 2;
+    const inputRow = 1 + headerLines.length + headerDividerLines + tabLines.length + dividerLines + messageHeight + 2;
     const cursorCol = Math.min(
       2 + 2 + this.inputValue.length,
       (process.stdout.columns || 80) - 1
@@ -542,14 +598,14 @@ export class CharsmUI {
     if (status.lastPoll) {
       this.lastPollTime = status.lastPoll;
     }
-    this.render();
+    this.scheduleRender();
   }
 
   updatePoolInfo(poolInfo) {
     if (poolInfo) {
       this.totalMessages = poolInfo.messages || 0;
       this.encryptionType = poolInfo.cipher || PRIVACY.DEFAULT_ENCRYPTION;
-      this.render();
+      this.scheduleRender();
     }
   }
 
@@ -581,7 +637,7 @@ export class CharsmUI {
     });
 
     this.displayedMessages.sort((a, b) => a.timestamp - b.timestamp);
-    this.render();
+    this.renderNow();
   }
 
   addSystemMessage(type, message) {
@@ -612,24 +668,24 @@ export class CharsmUI {
   updateSendStatus(message, type = 'info') {
     this.statusMessage = message || '';
     this.statusType = type;
-    this.render();
+    this.scheduleRender();
   }
 
   clearSendStatus() {
     this.statusMessage = '';
-    this.render();
+    this.scheduleRender();
   }
 
   showBlockingErrors(errors) {
     this.blockingErrors = errors || [];
     this.inputDisabled = true;
-    this.render();
+    this.renderNow();
   }
 
   clearBlockingErrors() {
     this.blockingErrors = [];
     this.inputDisabled = false;
-    this.render();
+    this.renderNow();
   }
 
   onSend(callback) {
