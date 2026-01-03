@@ -221,8 +221,8 @@ export async function readPassword(prompt, maskChar = '*') {
         }
       }
 
-      // DON'T pause stdin - leave it ready for next use
-      // CharsmUI will manage its own resume/pause
+      // Pause stdin to ensure clean state for next consumer (e.g. readline)
+      stdin.pause();
     };
 
     // Ensure stdin is in correct initial state

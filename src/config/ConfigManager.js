@@ -271,24 +271,9 @@ export class ConfigManager {
       }
     }
 
-    // Close readline before password input (uses raw mode)
-    rl.close();
-
-    // Get password and encrypt private key
-    const password = await this.promptForPasswordCreation();
-    process.stdout.write('Encrypting private key...');
-    const encryptedPrivateKey = await this.encryptPrivateKey(privateKey, password);
-    process.stdout.write('\r\x1b[K'); // Clear the "Encrypting..." line
-    console.log('✓ Private key encrypted successfully\n');
-
-    // Create new readline for remaining questions
-    const rl2 = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout
-    });
-
+    // Collect polling interval
     const pollIntervalStr = await this.promptInput(
-      rl2,
+      rl,
       `Polling interval in ms [${POLLING.DEFAULT_INTERVAL}]: `
     ) || String(POLLING.DEFAULT_INTERVAL);
 
@@ -296,7 +281,7 @@ export class ConfigManager {
     let timezone = '';
     while (!timezone) {
       const input = await this.promptInput(
-        rl2,
+        rl,
         'Timezone offset (e.g., +1, -5, +5.5, UTC) [default: UTC]: '
       );
 
@@ -309,7 +294,17 @@ export class ConfigManager {
       }
     }
 
-    rl2.close();
+    // Close readline before password input (uses raw mode)
+    rl.close();
+
+    // Get password and encrypt private key
+    const password = await this.promptForPasswordCreation();
+    process.stdout.write('Encrypting private key...');
+    const encryptedPrivateKey = await this.encryptPrivateKey(privateKey, password);
+    process.stdout.write('\r\x1b[K'); // Clear the "Encrypting..." line
+    console.log('✓ Private key encrypted successfully\n');
+
+
 
     // Build configuration object
     const config = {

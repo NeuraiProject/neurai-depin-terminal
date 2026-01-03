@@ -58,8 +58,9 @@ The wizard will ask you for:
 3. **RPC Password**: RPC password (optional, leave empty if not required)
 4. **DePIN Token**: Asset name (any valid Neurai asset)
 5. **Private Key**: Your private key in WIF format
-6. **Encryption Password**: Password to encrypt your private key (4-30 characters, required)
-7. **Polling Interval**: Interval in milliseconds to check for new messages (default: 10000)
+6. **Polling Interval**: Interval in milliseconds to check for new messages (default: 10000)
+7. **Timezone**: Timezone offset or "UTC" for message timestamps (default: UTC)
+8. **Encryption Password**: Password to encrypt your private key (4-30 characters, required)
 
 **Important:** Your private key will be encrypted with AES-256-GCM using the password you provide. You will need to enter this password every time you start the application. The decrypted key is kept in memory only and never saved unencrypted.
 
