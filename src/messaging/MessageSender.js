@@ -6,11 +6,12 @@
 
 import {
   RPC_METHODS,
-  ERROR_MESSAGES,
-  RECIPIENT_CACHE
+  ERROR_MESSAGES
 } from '../constants.js';
 import { MessageError, DepinError } from '../errors.js';
-import { normalizePubkey, hasPrivacyLayer } from '../utils.js';
+import { hasPrivacyLayer } from '../utils.js';
+import { RecipientDirectory } from './RecipientDirectory.js';
+import { MESSAGE_TYPES } from '../domain/messageTypes.js';
 
 /**
  * Sends DePIN messages to token holders or a specific recipient
@@ -23,17 +24,15 @@ export class MessageSender {
    * @param {WalletManager} walletManager - Wallet manager instance
    * @param {RpcService} rpcService - RPC service instance
    * @param {Object} neuraiDepinMsg - DePIN message library
+   * @param {RecipientDirectory} [recipientDirectory] - Recipient directory (shared cache)
    */
-  constructor(config, walletManager, rpcService, neuraiDepinMsg) {
+  constructor(config, walletManager, rpcService, neuraiDepinMsg, recipientDirectory = null) {
     this.config = config;
     this.walletManager = walletManager;
     this.rpcService = rpcService;
     this.neuraiDepinMsg = neuraiDepinMsg;
-    this.recipientCache = {
-      entries: [],
-      updatedAt: 0,
-      pending: null
-    };
+    this.recipientDirectory = recipientDirectory
+      || new RecipientDirectory(config, rpcService, neuraiDepinMsg);
   }
 
   /**
@@ -46,80 +45,23 @@ export class MessageSender {
 
   /**
    * Get all addresses holding the token
-   * @returns {Promise<Array<string>>} Array of addresses
+   * @returns {Promise<Array<{address: string, pubkey: string}>>} Recipient entries
    * @throws {MessageError} If no token holders found
    */
   async fetchDepinRecipients() {
-    const rpc = this.getRpc();
-
-    try {
-      const result = await rpc(RPC_METHODS.LIST_DEPIN_ADDRESSES, [this.config.token]);
-
-      if (!Array.isArray(result)) {
-        throw new MessageError('Invalid response from listdepinaddresses');
-      }
-
-      const recipients = result
-        .filter((entry) => entry && entry.address && entry.pubkey)
-        .map((entry) => ({
-          address: entry.address,
-          pubkey: normalizePubkey(entry.pubkey)
-        }));
-
-      if (recipients.length === 0) {
-        throw new MessageError(ERROR_MESSAGES.NO_RECIPIENTS);
-      }
-
-      return recipients;
-    } catch (error) {
-      if (error instanceof MessageError) {
-        throw error;
-      }
-      throw new MessageError(`Failed to fetch recipient list: ${error.message}`);
-    }
+    return this.recipientDirectory.fetchEntries();
   }
 
   async refreshRecipientCache(force = false) {
-    const now = Date.now();
-    const hasCache = this.recipientCache.entries.length > 0;
-    const isFresh = now - this.recipientCache.updatedAt < RECIPIENT_CACHE.REFRESH_MS;
-
-    if (!force && hasCache && isFresh) {
-      return this.recipientCache.entries;
-    }
-
-    if (this.recipientCache.pending) {
-      return this.recipientCache.pending;
-    }
-
-    this.recipientCache.pending = (async () => {
-      const entries = await this.fetchDepinRecipients();
-      this.recipientCache.entries = entries;
-      this.recipientCache.updatedAt = Date.now();
-      return entries;
-    })();
-
-    try {
-      return await this.recipientCache.pending;
-    } catch (error) {
-      if (hasCache) {
-        return this.recipientCache.entries;
-      }
-      throw error;
-    } finally {
-      this.recipientCache.pending = null;
-    }
+    return this.recipientDirectory.refresh(force);
   }
 
   getCachedRecipientEntries() {
-    return this.recipientCache.entries;
+    return this.recipientDirectory.getCachedEntries();
   }
 
   getCachedPrivateRecipientAddresses() {
-    if (!this.recipientCache.entries.length) {
-      return [];
-    }
-    return this.recipientCache.entries.map((entry) => entry.address).sort();
+    return this.recipientDirectory.getCachedAddresses();
   }
 
   /**
@@ -128,8 +70,7 @@ export class MessageSender {
    * @throws {MessageError} If no recipients with revealed public keys
    */
   async getRecipientPubkeys() {
-    const recipients = await this.refreshRecipientCache();
-    return recipients.map((entry) => entry.pubkey);
+    return this.recipientDirectory.getPubkeys();
   }
 
   /**
@@ -138,7 +79,7 @@ export class MessageSender {
    * @throws {MessageError} If no recipients with revealed public keys
    */
   async getRecipientEntries() {
-    return this.refreshRecipientCache();
+    return this.recipientDirectory.getEntries();
   }
 
   /**
@@ -147,8 +88,7 @@ export class MessageSender {
    * @throws {MessageError} If no recipients with revealed public keys
    */
   async getPrivateRecipientAddresses() {
-    const recipients = await this.refreshRecipientCache();
-    return recipients.map((entry) => entry.address).sort();
+    return this.recipientDirectory.getAddresses();
   }
 
   /**
@@ -158,19 +98,7 @@ export class MessageSender {
    * @throws {MessageError} If pubkey is not revealed or RPC fails
    */
   async getRecipientPubkeyForAddress(address) {
-    let recipients = await this.refreshRecipientCache();
-    let match = recipients.find((entry) => entry.address === address);
-
-    if (!match) {
-      recipients = await this.refreshRecipientCache(true);
-      match = recipients.find((entry) => entry.address === address);
-    }
-
-    if (!match) {
-      throw new MessageError(`${ERROR_MESSAGES.RECIPIENT_PUBKEY_NOT_REVEALED}: ${address}`);
-    }
-
-    return match.pubkey;
+    return this.recipientDirectory.getPubkeyForAddress(address);
   }
 
   /**
@@ -183,7 +111,7 @@ export class MessageSender {
     const trimmed = message.trim();
 
     if (!trimmed.startsWith('@')) {
-      return { messageType: 'group', message: trimmed, recipientAddress: null };
+      return { messageType: MESSAGE_TYPES.GROUP, message: trimmed, recipientAddress: null };
     }
 
     const match = trimmed.match(/^@(\S+)\s+(.+)$/);
@@ -195,7 +123,7 @@ export class MessageSender {
     const recipientAddress = match[1];
     const privateMessage = match[2].trim();
 
-    return { messageType: 'private', message: privateMessage, recipientAddress };
+    return { messageType: MESSAGE_TYPES.PRIVATE, message: privateMessage, recipientAddress };
   }
 
   /**
@@ -262,6 +190,7 @@ export class MessageSender {
    * @returns {number} result.timestamp - Send timestamp
    * @returns {"private"|"group"} result.messageType - Message type
    * @returns {string|null} result.recipientAddress - Target address for private messages
+   * @returns {string} result.messageHash - Message hash used for deduplication
    * @throws {MessageError} If sending fails
    */
   async send(message) {
@@ -307,7 +236,8 @@ export class MessageSender {
         recipients: parsed.messageType === 'private' ? 1 : recipientPubKeys.length,
         timestamp: Math.floor(Date.now() / 1000),
         messageType: parsed.messageType,
-        recipientAddress: parsed.recipientAddress
+        recipientAddress: parsed.recipientAddress,
+        messageHash: buildResult.messageHash
       };
     } catch (error) {
       // Mark as disconnected on error

@@ -19,6 +19,9 @@ export class MessageStore {
 
     /** @type {Set<string>} Set of seen message keys for deduplication */
     this.seenHashes = new Set();
+
+    /** @type {Map<string, string>} Map of outgoing private message hash to recipient */
+    this.outgoingPrivateRecipients = new Map();
   }
 
   /**
@@ -30,6 +33,8 @@ export class MessageStore {
    * @param {number} msg.timestamp - Unix timestamp in seconds
    * @param {string} msg.sender - Sender address
    * @param {string} msg.message - Message content
+   * @param {string} [msg.messageType] - Message type ("group" or "private")
+   * @param {string} [msg.peerAddress] - Peer address for private messages
    * @returns {boolean} True if message is new, false if duplicate
    */
   addMessage(msg) {
@@ -46,6 +51,26 @@ export class MessageStore {
     this.messages.sort((a, b) => a.timestamp - b.timestamp);
 
     return true; // New message added
+  }
+
+  /**
+   * Register a private message recipient by message hash
+   * @param {string} hash - Message hash
+   * @param {string} recipientAddress - Recipient address
+   */
+  registerOutgoingPrivateMessage(hash, recipientAddress) {
+    if (hash && recipientAddress) {
+      this.outgoingPrivateRecipients.set(hash, recipientAddress);
+    }
+  }
+
+  /**
+   * Get recipient address for a private message hash
+   * @param {string} hash - Message hash
+   * @returns {string|null} Recipient address or null
+   */
+  getOutgoingPrivateRecipient(hash) {
+    return this.outgoingPrivateRecipients.get(hash) || null;
   }
 
   /**
@@ -84,6 +109,7 @@ export class MessageStore {
   clear() {
     this.messages = [];
     this.seenHashes.clear();
+    this.outgoingPrivateRecipients.clear();
   }
 
   /**

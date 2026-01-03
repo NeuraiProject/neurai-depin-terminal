@@ -6,7 +6,7 @@ Terminal client for Neurai DePIN messaging with full-screen interface.
 
 ## Features
 
-- ✅ Full-screen terminal interface with blessed
+- ✅ Full-screen terminal interface with charsm
 - ✅ Simple configuration via `config.json`
 - ✅ **Encrypted private key storage** with AES-256-GCM encryption
 - ✅ Automatic broadcast to all token holders
@@ -140,6 +140,8 @@ The application will display a full-screen interface with:
 - **Enter** or **Ctrl+S**: Send message
 - **Ctrl+C** or **Escape**: Exit application
 - **Up/Down arrows**: Scroll in message area
+- **Ctrl+Left / Ctrl+Right**: Switch tabs
+- **Ctrl+W**: Close active private tab
 
 ### Private Messages
 
@@ -152,6 +154,9 @@ Send a private message by starting the line with `@` and the destination address
 Messages without the `@address` prefix are sent as group/broadcast messages.
 Typing `@` at the start opens a recipient list you can navigate with arrow keys and select with Enter (Esc to close).
 The recipient list is cached and refreshed every 60 seconds to keep selection fast.
+Private conversations appear as tabs named after the sender (e.g. `abc...xyz`). New private messages are marked with an asterisk.
+The Group tab always shows only group messages.
+Sending a private message opens its tab automatically.
 
 ## How It Works
 
@@ -176,7 +181,7 @@ src/
 │   ├── MessagePoller.js        # Automatic polling
 │   └── MessageSender.js        # Broadcast sending
 ├── ui/
-│   └── TerminalUI.js           # Blessed interface
+│   └── CharsmUI.js             # Charsm interface
 └── lib/
     └── depinMsgLoader.js       # IIFE bundle loader
 ```

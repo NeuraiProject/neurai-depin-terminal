@@ -7,6 +7,8 @@
 import { EventEmitter } from 'events';
 import { RPC_METHODS } from '../constants.js';
 import { isEncryptedResponse } from '../utils.js';
+import { MESSAGE_TYPES, normalizeMessageType } from '../domain/messageTypes.js';
+import { RecipientDirectory } from './RecipientDirectory.js';
 
 /**
  * Polls for new DePIN messages at regular intervals
@@ -26,8 +28,9 @@ export class MessagePoller extends EventEmitter {
    * @param {MessageStore} messageStore - Message store instance
    * @param {Object} neuraiDepinMsg - DePIN message library
    * @param {WalletManager} walletManager - Wallet manager instance (for decryption)
+   * @param {RecipientDirectory} [recipientDirectory] - Recipient directory (shared cache)
    */
-  constructor(config, rpcService, messageStore, neuraiDepinMsg, walletManager) {
+  constructor(config, rpcService, messageStore, neuraiDepinMsg, walletManager, recipientDirectory = null) {
     super();
     this.config = config;
     this.rpcService = rpcService;
@@ -37,6 +40,8 @@ export class MessagePoller extends EventEmitter {
     this.intervalId = null;
     this.isPolling = false;
     this.wasDisconnected = false; // Track if we were disconnected
+    this.recipientDirectory = recipientDirectory
+      || new RecipientDirectory(config, rpcService, neuraiDepinMsg);
   }
 
   /**
@@ -263,13 +268,26 @@ export class MessagePoller extends EventEmitter {
         return false; // Not for us or malformed
       }
 
+      const messageType = normalizeMessageType(msg.message_type || msg.messageType);
+      let peerAddress = null;
+
+      if (messageType === MESSAGE_TYPES.PRIVATE) {
+        if (msg.sender === this.walletManager.getAddress()) {
+          peerAddress = await this.resolvePrivatePeerAddress(msg);
+        } else {
+          peerAddress = msg.sender;
+        }
+      }
+
       // Add to store with deduplication
       const isNew = this.messageStore.addMessage({
         sender: msg.sender,
         message: plaintext,
         timestamp: msg.timestamp,
         hash: msg.hash,
-        signature: msg.signature_hex
+        signature: msg.signature_hex,
+        messageType: messageType,
+        peerAddress: peerAddress
       });
 
       if (isNew) {
@@ -286,7 +304,9 @@ export class MessagePoller extends EventEmitter {
           sender: msg.sender,
           message: plaintext,
           timestamp: msg.timestamp,
-          hash: msg.hash
+          hash: msg.hash,
+          messageType: messageType,
+          peerAddress: peerAddress
         });
         return true;
       }
@@ -296,5 +316,114 @@ export class MessagePoller extends EventEmitter {
       // Error decrypting individual message, skip
       return false;
     }
+  }
+
+  async resolvePrivatePeerAddress(msg) {
+    const mapped = this.messageStore.getOutgoingPrivateRecipient(msg.hash);
+    if (mapped) {
+      return mapped;
+    }
+
+    const hashes = this.extractRecipientHashes(msg.encrypted_payload_hex);
+    if (!hashes.length) {
+      return null;
+    }
+
+    const map = await this.recipientDirectory.getHashMap();
+    for (const hash of hashes) {
+      const address = map.get(hash);
+      if (address && address !== this.walletManager.getAddress()) {
+        return address;
+      }
+    }
+
+    return null;
+  }
+
+  extractRecipientHashes(encryptedPayloadHex) {
+    const utils = this.neuraiDepinMsg?.utils;
+    if (!utils?.hexToBytes || !utils?.bytesToHex) {
+      return [];
+    }
+
+    try {
+      const hex = this.normalizeHex(encryptedPayloadHex);
+      if (!hex) {
+        return [];
+      }
+      const serialized = utils.hexToBytes(hex);
+      let offset = 0;
+
+      const ephem = this.readVector(serialized, offset);
+      offset = ephem.offset;
+      const payload = this.readVector(serialized, offset);
+      offset = payload.offset;
+      const countRes = this.readCompactSize(serialized, offset);
+      const count = countRes.value;
+      offset = countRes.offset;
+
+      const hashes = [];
+      for (let i = 0; i < count; i += 1) {
+        if (offset + 20 > serialized.length) {
+          break;
+        }
+        const keyId = serialized.slice(offset, offset + 20);
+        offset += 20;
+        const v = this.readVector(serialized, offset);
+        offset = v.offset;
+        hashes.push(utils.bytesToHex(keyId).toLowerCase());
+      }
+      return hashes;
+    } catch (error) {
+      return [];
+    }
+  }
+
+  normalizeHex(hex) {
+    if (typeof hex !== 'string') {
+      return '';
+    }
+    const trimmed = hex.startsWith('0x') ? hex.slice(2) : hex;
+    return trimmed.trim().toLowerCase();
+  }
+
+  readCompactSize(buf, offset) {
+    if (offset >= buf.length) {
+      throw new Error('CompactSize: out of bounds');
+    }
+    const first = buf[offset];
+    if (first < 253) return { value: first, offset: offset + 1 };
+    if (first === 253) {
+      if (offset + 3 > buf.length) throw new Error('CompactSize: truncated uint16');
+      const value = buf[offset + 1] | (buf[offset + 2] << 8);
+      return { value, offset: offset + 3 };
+    }
+    if (first === 254) {
+      if (offset + 5 > buf.length) throw new Error('CompactSize: truncated uint32');
+      const value =
+        (buf[offset + 1]) |
+        (buf[offset + 2] << 8) |
+        (buf[offset + 3] << 16) |
+        (buf[offset + 4] << 24);
+      return { value: value >>> 0, offset: offset + 5 };
+    }
+    if (offset + 9 > buf.length) throw new Error('CompactSize: truncated uint64');
+    let value = 0n;
+    for (let i = 0; i < 8; i += 1) {
+      value |= BigInt(buf[offset + 1 + i]) << (8n * BigInt(i));
+    }
+    if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new Error('CompactSize: value too large');
+    }
+    return { value: Number(value), offset: offset + 9 };
+  }
+
+  readVector(buf, offset) {
+    const { value: len, offset: afterLen } = this.readCompactSize(buf, offset);
+    if (afterLen + len > buf.length) {
+      throw new Error('Vector: truncated');
+    }
+    const data = buf.slice(afterLen, afterLen + len);
+    return { data, offset: afterLen + len };
   }
 }

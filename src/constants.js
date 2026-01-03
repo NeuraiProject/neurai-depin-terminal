@@ -62,9 +62,10 @@ export const TOKEN = {
 // UI Layout
 export const UI = {
   TOP_BAR_HEIGHT: 2,
+  TAB_BAR_HEIGHT: 1,
   INPUT_BOX_HEIGHT: 3,
   STATUS_BAR_HEIGHT: 1,
-  MESSAGE_BOX_OFFSET: 6, // top bar + input + status
+  MESSAGE_BOX_OFFSET: 7, // top bar + tab bar + input + status
   SCROLLBAR_CHAR: ' '
 };
 
@@ -105,6 +106,7 @@ export const RPC_METHODS = {
 
 // Terminal Control Sequences
 export const TERMINAL = {
+  ENTER_ALT_SCREEN: '\x1b[?1049h',
   EXIT_ALT_SCREEN: '\x1b[?1049l',
   SHOW_CURSOR: '\x1b[?25h',
   RESET_ATTRIBUTES: '\x1b[0m',
@@ -200,6 +202,9 @@ export const TIME = {
 export const BLESSED_KEYS = {
   QUIT: ['C-c', 'escape'],
   SEND: ['enter', 'C-s'],
+  TAB_NEXT: ['C-right'],
+  TAB_PREV: ['C-left'],
+  TAB_CLOSE: ['C-w'],
   SCROLL_UP: ['up'],
   SCROLL_DOWN: ['down']
 };

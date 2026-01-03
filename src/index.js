@@ -13,7 +13,8 @@ import { RpcService } from './services/RpcService.js';
 import { MessageStore } from './messaging/MessageStore.js';
 import { MessagePoller } from './messaging/MessagePoller.js';
 import { MessageSender } from './messaging/MessageSender.js';
-import { TerminalUI } from './ui/TerminalUI.js';
+import { RecipientDirectory } from './messaging/RecipientDirectory.js';
+import { CharsmUI } from './ui/CharsmUI.js';
 import {
   INFO_MESSAGES,
   SUCCESS_MESSAGES,
@@ -25,10 +26,11 @@ import {
   ICONS
 } from './constants.js';
 import { extractErrorMessage } from './errors.js';
+import { MESSAGE_TYPES } from './domain/messageTypes.js';
 
 /**
  * Global UI instance for cleanup on exit
- * @type {TerminalUI|null}
+ * @type {CharsmUI|null}
  */
 let uiInstance = null;
 
@@ -92,17 +94,31 @@ async function initializeRpc(config) {
  * @returns {Object} Messaging components (store, poller, sender)
  */
 function initializeMessaging(config, walletManager, rpcService, neuraiDepinMsg) {
+  const recipientDirectory = new RecipientDirectory(config, rpcService, neuraiDepinMsg);
   const messageStore = new MessageStore();
-  const messagePoller = new MessagePoller(config, rpcService, messageStore, neuraiDepinMsg, walletManager);
-  const messageSender = new MessageSender(config, walletManager, rpcService, neuraiDepinMsg);
+  const messagePoller = new MessagePoller(
+    config,
+    rpcService,
+    messageStore,
+    neuraiDepinMsg,
+    walletManager,
+    recipientDirectory
+  );
+  const messageSender = new MessageSender(
+    config,
+    walletManager,
+    rpcService,
+    neuraiDepinMsg,
+    recipientDirectory
+  );
 
-  return { messageStore, messagePoller, messageSender };
+  return { messageStore, messagePoller, messageSender, recipientDirectory };
 }
 
 /**
  * Connect poller events to UI
  * @param {MessagePoller} messagePoller - Message poller instance
- * @param {TerminalUI} ui - Terminal UI instance
+ * @param {CharsmUI} ui - Terminal UI instance
  * @param {RpcService} rpcService - RPC service instance
  */
 function connectPollerToUI(messagePoller, ui, rpcService, onRpcDown) {
@@ -163,11 +179,11 @@ function connectPollerToUI(messagePoller, ui, rpcService, onRpcDown) {
 
 /**
  * Connect UI send action to message sender
- * @param {TerminalUI} ui - Terminal UI instance
+ * @param {CharsmUI} ui - Terminal UI instance
  * @param {MessageSender} messageSender - Message sender instance
  * @param {MessagePoller} messagePoller - Message poller instance
  */
-function connectSenderToUI(ui, messageSender, getMessagePoller) {
+function connectSenderToUI(ui, messageSender, getMessageStore, getMessagePoller) {
   ui.onSend(async (message) => {
     ui.updateSendStatus(INFO_MESSAGES.SENDING, 'info');
 
@@ -177,7 +193,15 @@ function connectSenderToUI(ui, messageSender, getMessagePoller) {
         ? `${result.hash.slice(0, HASH.DISPLAY_LENGTH)}...`
         : 'N/A';
 
-      if (result.messageType === 'private') {
+      if (result.messageType === MESSAGE_TYPES.PRIVATE && result.messageHash && result.recipientAddress) {
+        const store = getMessageStore();
+        if (store) {
+          store.registerOutgoingPrivateMessage(result.messageHash, result.recipientAddress);
+        }
+        ui.openPrivateTab(result.recipientAddress, true);
+      }
+
+      if (result.messageType === MESSAGE_TYPES.PRIVATE) {
         ui.updateSendStatus(
           `Private message sent to ${result.recipientAddress}. Hash: ${hashPreview}`,
           'success'
@@ -206,7 +230,7 @@ function connectSenderToUI(ui, messageSender, getMessagePoller) {
 /**
  * Perform initial connection check and update UI
  * @param {RpcService} rpcService - RPC service instance
- * @param {TerminalUI} ui - Terminal UI instance
+ * @param {CharsmUI} ui - Terminal UI instance
  */
 async function performInitialConnectionCheck(rpcService, ui) {
   if (rpcService.isConnected()) {
@@ -242,7 +266,7 @@ async function performInitialConnectionCheck(rpcService, ui) {
  * @param {RpcService} rpcService - RPC service
  * @param {WalletManager} walletManager - Wallet manager
  * @param {Object} config - Configuration
- * @param {TerminalUI} ui - UI instance
+ * @param {CharsmUI} ui - UI instance
  * @param {MessagePoller} messagePoller - Message poller instance
  */
 function startVerificationLoop(rpcService, walletManager, config, ui, getMessagePoller, resetMessagingAfterReconnect) {
@@ -367,7 +391,7 @@ async function main() {
     const rpcService = await initializeRpc(config);
 
     // 5. Initialize messaging components
-    const { messageStore, messagePoller, messageSender } = initializeMessaging(
+    const { messageStore, messagePoller, messageSender, recipientDirectory } = initializeMessaging(
       config,
       walletManager,
       rpcService,
@@ -379,6 +403,7 @@ async function main() {
       messageStore,
       messagePoller,
       messageSender,
+      recipientDirectory,
       detachPollerUi: null,
       recipientRefreshInterval: null
     };
@@ -394,7 +419,7 @@ async function main() {
     // 6. Initialize UI
     console.log(INFO_MESSAGES.STARTING_UI);
     console.log('');
-    const ui = new TerminalUI(config, walletManager, rpcService);
+  const ui = await CharsmUI.create(config, walletManager, rpcService);
     uiInstance = ui;
     ui.setRecipientProvider(
       () => messaging.messageSender.getPrivateRecipientAddresses(),
@@ -445,9 +470,9 @@ async function main() {
         rpcService,
         messaging.messageStore,
         neuraiDepinMsg,
-        walletManager
+        walletManager,
+        messaging.recipientDirectory
       );
-      messaging.messageSender = new MessageSender(config, walletManager, rpcService, neuraiDepinMsg);
 
       // Mark as disconnected so the first poll is a full sync
       messaging.messagePoller.wasDisconnected = true;
@@ -463,6 +488,7 @@ async function main() {
     };
 
     const getMessagePoller = () => messaging.messagePoller;
+    const getMessageStore = () => messaging.messageStore;
 
     // 8. Create verification loop (Single retry mechanism)
     const verification = startVerificationLoop(
@@ -479,7 +505,7 @@ async function main() {
     attachCurrentPollerToUI();
 
     // 10. Connect message sending from UI
-    connectSenderToUI(ui, messaging.messageSender, getMessagePoller);
+    connectSenderToUI(ui, messaging.messageSender, getMessageStore, getMessagePoller);
 
     // 11. Start verification loop (after wiring listeners)
     verification.start();
