@@ -18,7 +18,7 @@ import {
   SUCCESS_MESSAGES
 } from '../constants.js';
 import { ConfigError, PasswordError, EncryptionError } from '../errors.js';
-import { readPassword, validatePassword, isValidUrl, isValidTimezone } from '../utils.js';
+import { readPassword, validatePassword, isValidUrl, isValidTimezone, drainInput } from '../utils.js';
 
 /**
  * Manages application configuration with encrypted private key storage
@@ -225,6 +225,9 @@ export class ConfigManager {
    * @returns {Promise<void>}
    */
   async runWizard() {
+    // Ensure input buffer is clean before starting wizard
+    await drainInput(process.stdin);
+
     const rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout
@@ -296,9 +299,9 @@ export class ConfigManager {
         rl2,
         'Timezone offset (e.g., +1, -5, +5.5, UTC) [default: UTC]: '
       );
-      
+
       const candidate = input || 'UTC';
-      
+
       if (isValidTimezone(candidate)) {
         timezone = candidate;
       } else {
