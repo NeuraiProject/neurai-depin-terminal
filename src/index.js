@@ -386,6 +386,7 @@ async function main() {
     console.log('');
     const ui = new TerminalUI(config, walletManager, rpcService);
     uiInstance = ui;
+    ui.setRecipientProvider(() => messaging.messageSender.getPrivateRecipientAddresses());
 
     // 7. Get initial pool info and check connection
     await performInitialConnectionCheck(rpcService, ui);

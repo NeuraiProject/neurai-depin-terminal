@@ -150,6 +150,7 @@ Send a private message by starting the line with `@` and the destination address
 ```
 
 Messages without the `@address` prefix are sent as group/broadcast messages.
+Typing `@` at the start opens a recipient list you can navigate with arrow keys and select with Enter (Esc to close).
 
 ## How It Works
 

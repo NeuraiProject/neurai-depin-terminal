@@ -62,7 +62,18 @@ export class MessageSender {
    * @throws {MessageError} If no recipients with revealed public keys
    */
   async getRecipientPubkeys(addresses) {
-    const recipientPubKeys = [];
+    const recipients = await this.getRecipientEntries(addresses);
+    return recipients.map((entry) => entry.pubkey);
+  }
+
+  /**
+   * Get revealed public keys with addresses
+   * @param {Array<string>} addresses - Array of addresses
+   * @returns {Promise<Array<{address: string, pubkey: string}>>} Recipient entries
+   * @throws {MessageError} If no recipients with revealed public keys
+   */
+  async getRecipientEntries(addresses) {
+    const recipients = [];
     const rpc = this.getRpc();
 
     for (const addr of addresses) {
@@ -70,7 +81,7 @@ export class MessageSender {
         const res = await rpc(RPC_METHODS.GET_PUBKEY, [addr]);
 
         if (isPubkeyRevealed(res)) {
-          recipientPubKeys.push(normalizePubkey(res.pubkey));
+          recipients.push({ address: addr, pubkey: normalizePubkey(res.pubkey) });
         }
       } catch (error) {
         // Skip addresses without revealed pubkey
@@ -78,11 +89,22 @@ export class MessageSender {
       }
     }
 
-    if (recipientPubKeys.length === 0) {
+    if (recipients.length === 0) {
       throw new MessageError(ERROR_MESSAGES.NO_RECIPIENTS);
     }
 
-    return recipientPubKeys;
+    return recipients;
+  }
+
+  /**
+   * Get recipient addresses eligible for private messages
+   * @returns {Promise<Array<string>>} Array of addresses
+   * @throws {MessageError} If no recipients with revealed public keys
+   */
+  async getPrivateRecipientAddresses() {
+    const addresses = await this.getTokenHolders();
+    const recipients = await this.getRecipientEntries(addresses);
+    return recipients.map((entry) => entry.address).sort();
   }
 
   /**

@@ -2,9 +2,10 @@ import blessed from 'blessed';
 import { UI, COLORS, KEY_CODES } from '../../constants.js';
 
 export class InputBox {
-  constructor(screen, onSend) {
+  constructor(screen, onSend, shouldSend = null) {
     this.screen = screen;
     this.onSend = onSend;
+    this.shouldSend = shouldSend;
     
     this.component = blessed.textarea({
       bottom: UI.STATUS_BAR_HEIGHT,
@@ -33,6 +34,9 @@ export class InputBox {
     this.component.key('enter', () => {
       const message = this.component.getValue().trim();
       if (message) {
+        if (this.shouldSend && !this.shouldSend(message)) {
+          return;
+        }
         this.onSend(message);
         this.component.clearValue();
         this.screen.render();
@@ -40,10 +44,31 @@ export class InputBox {
     });
   }
 
+  setShouldSend(shouldSend) {
+    this.shouldSend = shouldSend;
+  }
+
   focus() {
     if (!this.disabled) {
       this.component.focus();
     }
+  }
+
+  pauseInput() {
+    this._prevInputOnFocus = this.component.inputOnFocus;
+    this.component.inputOnFocus = false;
+    if (typeof this.component.cancel === 'function') {
+      this.component.cancel();
+    }
+  }
+
+  resumeInput() {
+    if (typeof this._prevInputOnFocus === 'boolean') {
+      this.component.inputOnFocus = this._prevInputOnFocus;
+    } else {
+      this.component.inputOnFocus = true;
+    }
+    this.focus();
   }
 
   disable() {

@@ -19,6 +19,7 @@ import { MessageBox } from './components/MessageBox.js';
 import { InputBox } from './components/InputBox.js';
 import { StatusBar } from './components/StatusBar.js';
 import { ErrorOverlay } from './components/ErrorOverlay.js';
+import { RecipientSelector } from './components/RecipientSelector.js';
 
 /**
  * Terminal UI manager using blessed library
@@ -44,10 +45,14 @@ export class TerminalUI {
     this.totalMessages = 0;
     this.lastConnectionStatus = false;
     this.lastPollTime = null;
+    this.recipientProvider = null;
+    this.recipientCache = null;
+    this.recipientLoadPromise = null;
 
     this.initializeScreen();
     this.createComponents();
     this.setupKeybindings();
+    this.setupInputListeners();
     this.inputBox.focus();
     this.screen.render();
     this.updateTopBar({ connected: false, lastPoll: null });
@@ -72,6 +77,10 @@ export class TerminalUI {
     this.inputBox = new InputBox(this.screen, (msg) => this.handleSend(msg));
     this.statusBar = new StatusBar(this.screen);
     this.errorOverlay = new ErrorOverlay(this.screen);
+    this.recipientSelector = new RecipientSelector(this.screen);
+
+    this.inputBox.setShouldSend(() => !this.recipientSelector.isVisible());
+    this.recipientSelector.onSelect((address) => this.applyRecipientSelection(address));
   }
 
   /**
@@ -99,10 +108,110 @@ export class TerminalUI {
    */
   setupKeybindings() {
     // Exit on Ctrl+C or Escape
-    this.screen.key(BLESSED_KEYS.QUIT, () => {
+    this.screen.key(BLESSED_KEYS.QUIT, (ch, key) => {
+      if (this.recipientSelector?.isVisible() && key?.name === 'escape') {
+        this.closeRecipientSelector();
+        return;
+      }
+
       this.cleanup();
       process.exit(0);
     });
+  }
+
+  /**
+   * Setup input listeners for private message recipient selection
+   */
+  setupInputListeners() {
+    this.inputBox.component.on('keypress', () => {
+      setTimeout(() => this.handleInputValueChange(), 0);
+    });
+  }
+
+  /**
+   * Set provider for private recipient list
+   * @param {Function} provider - Async function returning array of addresses
+   */
+  setRecipientProvider(provider) {
+    this.recipientProvider = provider;
+  }
+
+  async loadRecipientList() {
+    if (!this.recipientProvider) {
+      return [];
+    }
+
+    if (this.recipientCache) {
+      return this.recipientCache;
+    }
+
+    if (this.recipientLoadPromise) {
+      return this.recipientLoadPromise;
+    }
+
+    this.recipientLoadPromise = (async () => {
+      const recipients = await this.recipientProvider();
+      this.recipientCache = recipients;
+      return recipients;
+    })();
+
+    try {
+      return await this.recipientLoadPromise;
+    } finally {
+      this.recipientLoadPromise = null;
+    }
+  }
+
+  handleInputValueChange() {
+    const value = this.inputBox.component.getValue();
+
+    if (value === '@') {
+      this.openRecipientSelector();
+      return;
+    }
+
+    if (this.recipientSelector.isVisible()) {
+      this.closeRecipientSelector();
+    }
+  }
+
+  async openRecipientSelector() {
+    if (!this.recipientProvider || this.recipientSelector.isVisible()) {
+      return;
+    }
+
+    this.inputBox.pauseInput();
+
+    this.recipientSelector.setLoading();
+    this.recipientSelector.show();
+
+    try {
+      const recipients = await this.loadRecipientList();
+      this.recipientSelector.setItems(recipients);
+    } catch (error) {
+      this.recipientSelector.hide();
+      this.updateSendStatus(`Failed to load recipients: ${error.message}`, 'error');
+      this.inputBox.focus();
+    }
+  }
+
+  closeRecipientSelector() {
+    if (!this.recipientSelector.isVisible()) {
+      return;
+    }
+
+    this.recipientSelector.hide();
+    this.inputBox.resumeInput();
+  }
+
+  applyRecipientSelection(address) {
+    if (!address) {
+      return;
+    }
+
+    this.inputBox.component.setValue(`@${address} `);
+    this.closeRecipientSelector();
+    this.screen.render();
   }
 
   /**
